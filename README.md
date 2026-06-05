@@ -1,36 +1,111 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Recall Platform
 
-## Getting Started
+Next.js App Router frontend for Recall AI, with Supabase authentication and dashboard backend.
 
-First, run the development server:
+## Prerequisites
+
+- Node.js 20+
+- [Supabase CLI](https://supabase.com/docs/guides/cli) (optional, for local Postgres/Auth)
+
+## Setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Copy environment variables:
+
+```bash
+cp .env.example .env.local
+```
+
+3. Start local Supabase (optional):
+
+```bash
+npx supabase start
+```
+
+Copy the **API URL** and **anon key** from the CLI output into `.env.local`. Apply migrations:
+
+```bash
+npx supabase db reset
+```
+
+4. Configure Supabase Auth (Dashboard or local):
+
+- **Site URL**: `http://localhost:3000`
+- **Redirect URLs**: `http://localhost:3000/auth/callback`
+- Enable **Google** OAuth provider (Client ID + secret)
+- For local dev, email confirmations are disabled in `supabase/config.toml` (`enable_confirmations = false`)
+
+5. Run the app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Auth flows
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Route | Behavior |
+|-------|----------|
+| `/signup` | Email/password + Google OAuth → `/onboarding` |
+| `/login` | Email/password + Google → `/dashboard` |
+| `/forgot-password` | Sends Supabase reset email |
+| `/reset-password` | Updates password after recovery link |
+| `/onboarding` | Saves study plan via `POST /api/me/onboarding`, seeds demo topics |
+| `/auth/callback` | OAuth / email link session exchange |
 
-## Learn More
+Protected routes require a session (see `middleware.ts`).
 
-To learn more about Next.js, take a look at the following resources:
+## API
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/me/onboarding` | POST | Complete onboarding + seed dashboard data |
+| `/api/me/dashboard` | GET | Aggregated dashboard payload |
+| `/api/ai/questions/extract` | POST | OCR + structure uploaded exam files (multipart) |
+| `/api/ai/questions/submit` | POST | Save questions + embed into pgvector |
+| `/api/ai/tutor/chat` | POST | RAG tutor (SSE stream) |
+| `/api/ai/search` | POST | Semantic search over vectors |
+| `/api/ai/cards/generate` | POST | AI flashcard generation |
+| `/api/ai/insights/regenerate` | POST | Regenerate dashboard insight |
+| `/api/ai/schedule/regenerate` | POST | AI weekly schedule |
+| `/api/ai/quiz/generate` | POST | AI quiz from topic context |
+| `/api/ai/mock/generate` | POST | Mock exam from question bank RAG |
+| `/api/ai/mock/grade` | POST | Grade answer (text or image OCR) |
+| `/api/public/papers` | GET | Question bank papers |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## AI stack
 
-## Deploy on Vercel
+- **Primary LLM / vision / OCR**: Gemini 2.5 (`GEMINI_MODEL`, default `gemini-2.5-flash`)
+- **Failover LLM**: Groq (`GROQ_MODEL`)
+- **Embeddings**: Google Gemini embedding API (`GEMINI_EMBEDDING_MODEL`, 768-dim vectors in Supabase pgvector)
+- **Vector store**: `content_documents` + `content_chunks` with `match_content_chunks()` RPC
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Set in `.env.local`:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+GOOGLE_GENERATIVE_AI_API_KEY=
+GROQ_API_KEY=
+```
+
+Seed the question bank into Postgres, then backfill vectors:
+
+```bash
+npm run seed-papers
+npm run embed-papers
+```
+
+Optional: seed contributor stats after users exist (`npm run seed-contributors`). Create a Supabase Storage bucket named `question-uploads` for upload file persistence.
+
+## Database schema
+
+Migrations live in `supabase/migrations/`. Core tables: `profiles`, `study_plans`, `topics`, `cards`, `card_scheduling`, `review_events`, `user_insights`. AI tables: `content_documents`, `content_chunks`, `question_submissions`, `submitted_questions`, `tutor_threads`, `tutor_messages`, `ai_usage_logs`, `papers`.
+
+## Production
+
+Set `NEXT_PUBLIC_SITE_URL` to your production origin. Add the same URL and `/auth/callback` to Supabase redirect allowlist. Enable email confirmation if desired.
