@@ -1,6 +1,7 @@
 export const AI_CONFIG = {
   groqModel: process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile",
-  groqVisionModel: process.env.GROQ_VISION_MODEL ?? "llama-3.2-90b-vision-preview",
+  groqVisionModel:
+    process.env.GROQ_VISION_MODEL ?? "meta-llama/llama-4-scout-17b-16e-instruct",
   embeddingModel: process.env.GEMINI_EMBEDDING_MODEL ?? "text-embedding-004",
   embeddingFallbackModel: "gemini-embedding-001",
   embeddingDimensions: 768,
