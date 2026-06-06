@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { BankView } from "./BankView";
 
@@ -11,5 +12,15 @@ export const metadata: Metadata = {
 };
 
 export default function Page() {
-  return <BankView />;
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-background flex items-center justify-center text-muted-foreground text-sm">
+          Loading question bank…
+        </div>
+      }
+    >
+      <BankView />
+    </Suspense>
+  );
 }

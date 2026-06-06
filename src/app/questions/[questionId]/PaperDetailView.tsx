@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { AIButton } from "@/components/ui/AIButton";
 import { PublicHeader } from "@/components/layout/PublicHeader";
-import { getPaper, PAPERS, type Paper } from "@/lib/data/question-papers";
+import type { Paper } from "@/lib/data/question-papers";
 
 export function PaperDetailView() {
   const params = useParams<{ questionId: string }>();
@@ -33,18 +33,25 @@ export function PaperDetailView() {
   const pathname = usePathname();
   const router = useRouter();
   const view: "digital" | "photo" = searchParams.get("view") === "photo" ? "photo" : "digital";
-  const [paper, setPaper] = useState<Paper | null>(getPaper(questionId) ?? null);
-  const [loading, setLoading] = useState(!paper);
+  const [paper, setPaper] = useState<Paper | null>(null);
+  const [related, setRelated] = useState<Paper[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/public/papers/${questionId}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d?.paper) setPaper(d.paper);
-        else setPaper(getPaper(questionId) ?? null);
+    Promise.all([
+      fetch(`/api/public/papers/${questionId}`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/public/papers/${questionId}/related`).then((r) => (r.ok ? r.json() : { papers: [] })),
+    ])
+      .then(([detail, rel]) => {
+        if (detail?.paper) setPaper(detail.paper);
+        else setPaper(null);
+        setRelated(rel?.papers ?? []);
       })
-      .catch(() => setPaper(getPaper(questionId) ?? null))
+      .catch(() => {
+        setPaper(null);
+        setRelated([]);
+      })
       .finally(() => setLoading(false));
   }, [questionId]);
 
@@ -78,7 +85,11 @@ export function PaperDetailView() {
     router.push(`${pathname}?${next.toString()}`);
   };
 
-  const related = PAPERS.filter((p) => p.id !== paper.id && p.course === paper.course).slice(0, 4);
+  const downloadOriginal = () => {
+    const url = paper.scans[0]?.pageUrl;
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -146,7 +157,12 @@ export function PaperDetailView() {
             >
               Generate mock from this paper
             </AIButton>
-            <button className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-sm border border-border hover:bg-surface-raised">
+            <button
+              type="button"
+              onClick={downloadOriginal}
+              disabled={!paper.hasPhoto || paper.scans.length === 0}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-sm border border-border hover:bg-surface-raised disabled:opacity-40"
+            >
               <Download className="size-4" /> Download original
             </button>
           </div>
@@ -196,7 +212,7 @@ export function PaperDetailView() {
   );
 }
 
-function DigitalView({ paper }: { paper: ReturnType<typeof getPaper> & {} }) {
+function DigitalView({ paper }: { paper: Paper }) {
   if (!paper.hasDigital || paper.digital.sections.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-border p-8 text-center">
@@ -295,7 +311,7 @@ function DigitalView({ paper }: { paper: ReturnType<typeof getPaper> & {} }) {
   );
 }
 
-function PhotoView({ paper }: { paper: ReturnType<typeof getPaper> & {} }) {
+function PhotoView({ paper }: { paper: Paper }) {
   const [page, setPage] = useState(0);
   const [zoom, setZoom] = useState(1);
 

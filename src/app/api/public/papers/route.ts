@@ -1,64 +1,90 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { PAPERS } from "@/lib/data/question-papers";
-import { mapDbPaper } from "@/lib/papers/map-paper";
+import { parsePaperListParams, queryPapers } from "@/lib/papers/query-papers";
+import { PAPERS } from "@/lib/data/question-papers.fixtures";
 
-function filterPapers<T extends { university?: string; topic?: string; year?: number; title?: string }>(
-  papers: T[],
-  params: { university?: string | null; topic?: string | null; year?: string | null; q?: string | null }
-): T[] {
-  let result = papers;
-  if (params.university) {
-    result = result.filter((p) => p.university?.toLowerCase().includes(params.university!.toLowerCase()));
+function filterFixtures(
+  params: ReturnType<typeof parsePaperListParams>
+) {
+  let result = PAPERS;
+  if (params.university?.length) {
+    result = result.filter((p) => params.university!.includes(p.university));
   }
-  if (params.topic) {
-    result = result.filter((p) => p.topic?.toLowerCase().includes(params.topic!.toLowerCase()));
+  if (params.department?.length) {
+    result = result.filter((p) => params.department!.includes(p.department));
   }
-  if (params.year) {
-    const y = Number(params.year);
-    if (!Number.isNaN(y)) result = result.filter((p) => p.year === y);
+  if (params.course?.length) {
+    result = result.filter((p) => params.course!.includes(p.course));
   }
+  if (params.semester?.length) {
+    result = result.filter((p) => params.semester!.includes(String(p.semester)));
+  }
+  if (params.year?.length) {
+    result = result.filter((p) => params.year!.includes(String(p.year)));
+  }
+  if (params.examType?.length) {
+    result = result.filter((p) => params.examType!.includes(p.examType));
+  }
+  if (params.verifiedOnly) result = result.filter((p) => p.verified);
+  if (params.hasPhoto) result = result.filter((p) => p.hasPhoto);
+  if (params.hasDigital) result = result.filter((p) => p.hasDigital);
   if (params.q) {
-    const q = params.q.toLowerCase();
-    result = result.filter(
-      (p) => p.title?.toLowerCase().includes(q) || p.topic?.toLowerCase().includes(q) || p.university?.toLowerCase().includes(q)
+    const needle = params.q.toLowerCase();
+    result = result.filter((p) =>
+      `${p.course} ${p.courseTitle} ${p.university} ${p.department}`.toLowerCase().includes(needle)
     );
   }
-  return result;
+  const page = params.page ?? 1;
+  const limit = params.limit ?? 24;
+  const total = result.length;
+  const start = (page - 1) * limit;
+  return { papers: result.slice(start, start + limit), total, page, limit, source: "fixture" as const };
+}
+
+function hasActiveFilters(params: ReturnType<typeof parsePaperListParams>): boolean {
+  return Boolean(
+    params.q ||
+      params.university?.length ||
+      params.department?.length ||
+      params.course?.length ||
+      params.semester?.length ||
+      params.year?.length ||
+      params.examType?.length ||
+      params.verifiedOnly ||
+      params.hasPhoto ||
+      params.hasDigital ||
+      (params.page && params.page > 1)
+  );
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const university = searchParams.get("university");
-  const topic = searchParams.get("topic");
-  const year = searchParams.get("year");
-  const q = searchParams.get("q");
-  const strict = searchParams.get("source") === "db";
+  const params = parsePaperListParams(searchParams);
+  const useFixture =
+    process.env.NODE_ENV === "development" && searchParams.get("source") === "fixture";
 
-  const supabase = await createClient();
-
-  let query = supabase
-    .from("papers")
-    .select("*")
-    .eq("visibility", "public")
-    .order("year", { ascending: false });
-
-  if (university) query = query.ilike("institution", `%${university}%`);
-  if (topic) query = query.ilike("topic", `%${topic}%`);
-  if (year) query = query.eq("year", Number(year));
-
-  const { data: dbPapers, error } = await query;
-
-  if (!error && dbPapers && dbPapers.length > 0) {
-    let papers = dbPapers.map(mapDbPaper);
-    if (q) papers = filterPapers(papers, { q });
-    return NextResponse.json({ papers, source: "db" });
+  if (useFixture) {
+    return NextResponse.json(filterFixtures(params));
   }
 
-  if (strict) {
-    return NextResponse.json({ papers: [], source: "db" });
-  }
+  try {
+    const supabase = await createClient();
+    const result = await queryPapers(supabase, params);
 
-  const papers = filterPapers(PAPERS, { university, topic, year, q });
-  return NextResponse.json({ papers, source: "fixture" });
+    if (
+      process.env.NODE_ENV === "development" &&
+      result.total === 0 &&
+      !hasActiveFilters(params)
+    ) {
+      return NextResponse.json(filterFixtures(params));
+    }
+
+    return NextResponse.json({ ...result, source: "db" });
+  } catch (e) {
+    if (process.env.NODE_ENV === "development") {
+      return NextResponse.json(filterFixtures(params));
+    }
+    const message = e instanceof Error ? e.message : "Failed to load papers";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

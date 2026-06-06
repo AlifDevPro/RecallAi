@@ -4,6 +4,9 @@ import { isGroqConfigured } from "@/lib/ai/config";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain"];
 

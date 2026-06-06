@@ -1,4 +1,5 @@
 import { groqGenerateVision } from "./groq";
+import { isPdfFile, preparePdfOcrSource } from "./pdf-extract";
 import { generateWithFailover } from "./router";
 import { OCR_STRUCTURE, OCR_TRANSCRIBE } from "./prompts";
 
@@ -17,12 +18,21 @@ export type ExtractedQuestion = {
 function fileMime(file: File): string {
   return (
     file.type ||
-    (file.name.endsWith(".pdf")
-      ? "application/pdf"
-      : file.name.endsWith(".png")
-        ? "image/png"
+    (file.name.endsWith(".png")
+      ? "image/png"
+      : file.name.endsWith(".webp")
+        ? "image/webp"
         : "image/jpeg")
   );
+}
+
+async function visionTranscribePng(png: Uint8Array, mimeType = "image/png"): Promise<string> {
+  const base64 = Buffer.from(png).toString("base64");
+  const { text } = await groqGenerateVision(
+    { text: OCR_TRANSCRIBE, imageBase64: base64, mimeType },
+    { system: OCR_TRANSCRIBE, route: "ocr-vision" }
+  );
+  return text;
 }
 
 export async function ocrFromFiles(
@@ -37,13 +47,22 @@ export async function ocrFromFiles(
       continue;
     }
 
+    if (isPdfFile(file)) {
+      const buffer = new Uint8Array(await file.arrayBuffer());
+      const source = await preparePdfOcrSource(buffer);
+
+      if (source.text.trim()) {
+        textParts.push(source.text);
+      }
+
+      for (const png of source.images) {
+        textParts.push(await visionTranscribePng(png));
+      }
+      continue;
+    }
+
     const buffer = await file.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
-    const { text } = await groqGenerateVision(
-      { text: OCR_TRANSCRIBE, imageBase64: base64, mimeType: fileMime(file) },
-      { system: OCR_TRANSCRIBE, route: "ocr-vision" }
-    );
-    textParts.push(text);
+    textParts.push(await visionTranscribePng(new Uint8Array(buffer), fileMime(file)));
   }
 
   const combined = textParts.join("\n\n---\n\n");

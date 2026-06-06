@@ -48,6 +48,9 @@ export function UploadView() {
   });
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const [filePaths, setFilePaths] = useState<string[]>([]);
+  const [submissionId, setSubmissionId] = useState<string | null>(null);
+  const [institutionOptions, setInstitutionOptions] = useState<string[]>([]);
 
   const handleFiles = (fl: FileList | null) => {
     if (!fl) return;
@@ -64,6 +67,7 @@ export function UploadView() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Extraction failed");
       setExtracted(data.extracted ?? []);
+      setFilePaths(data.filePaths ?? []);
       if (data.extracted?.[0]) {
         setMetadata((m) => ({
           ...m,
@@ -90,6 +94,7 @@ export function UploadView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           extracted,
+          filePaths,
           metadata: {
             institution: metadata.institution,
             course: metadata.course,
@@ -102,6 +107,7 @@ export function UploadView() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Submit failed");
+      setSubmissionId(data.submissionId ?? null);
       setStep(3);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Submit failed");
@@ -138,6 +144,7 @@ export function UploadView() {
                 <Upload className="size-8 text-muted-foreground" />
                 <span className="font-semibold">Drop files or click to upload</span>
                 <span className="text-xs text-muted-foreground">JPG, PNG, PDF, TXT · up to 25 MB each</span>
+                <span className="text-xs text-muted-foreground">Digital PDFs extract faster; scanned PDFs and PDFs with diagrams may take longer (up to 10 pages, 25 figures).</span>
               </button>
               <input ref={inputRef} type="file" multiple accept="image/*,application/pdf,.txt" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
 
@@ -179,7 +186,19 @@ export function UploadView() {
               <h2 className="text-xl font-bold tracking-tight">Confirm shared metadata</h2>
               <p className="text-sm text-muted-foreground mt-1">Applies to the whole batch unless overridden per-question.</p>
               <div className="mt-5 grid sm:grid-cols-2 gap-3">
-                <MetaFormField label="Institution" value={metadata.institution || extracted[0]?.inst || ""} onChange={(v) => setMetadata((m) => ({ ...m, institution: v }))} icon={Building2} />
+                <MetaFormField
+                  label="Institution"
+                  value={metadata.institution || extracted[0]?.inst || ""}
+                  onChange={(v) => setMetadata((m) => ({ ...m, institution: v }))}
+                  onFocus={() => {
+                    fetch("/api/public/institutions")
+                      .then((r) => r.json())
+                      .then((d) => setInstitutionOptions(d.institutions ?? []))
+                      .catch(() => {});
+                  }}
+                  suggestions={institutionOptions}
+                  icon={Building2}
+                />
                 <MetaFormField label="Course" placeholder="e.g. CS213 Data Structures" value={metadata.course} onChange={(v) => setMetadata((m) => ({ ...m, course: v }))} />
                 <MetaFormField label="Semester" placeholder="e.g. Sem 4" value={metadata.semester} onChange={(v) => setMetadata((m) => ({ ...m, semester: v }))} />
                 <MetaFormField label="Year" value={metadata.year || String(extracted[0]?.year ?? "")} onChange={(v) => setMetadata((m) => ({ ...m, year: v }))} />
@@ -198,8 +217,18 @@ export function UploadView() {
               <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">
                 {extracted.length} questions queued for moderation. You&apos;ll earn +{extracted.length * 5} contribution points once approved.
               </p>
+              <p className="text-sm text-muted-foreground mt-3 max-w-md mx-auto">
+                Your paper will appear in the Question Bank after an admin approves it at{" "}
+                <Link href="/admin" className="text-primary hover:underline font-medium">/admin</Link>.
+              </p>
+              {submissionId && (
+                <p className="text-[11px] font-mono text-muted-foreground mt-2">
+                  Submission ID: {submissionId}
+                </p>
+              )}
               <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
                 <Link href="/questions" className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm border border-border/40 hover:bg-surface-raised">Browse bank</Link>
+                <Link href="/admin" className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm border border-border/40 hover:bg-surface-raised">Moderation queue</Link>
                 <Link href="/contributors" className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm bg-primary text-primary-foreground font-semibold">See leaderboard</Link>
               </div>
             </div>
@@ -275,13 +304,18 @@ function MetaFormField({
   onChange,
   placeholder,
   icon: Icon,
+  suggestions,
+  onFocus,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   icon?: React.ComponentType<{ className?: string }>;
+  suggestions?: string[];
+  onFocus?: () => void;
 }) {
+  const listId = `suggestions-${label.replace(/\s+/g, "-").toLowerCase()}`;
   return (
     <label className="block">
       <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
@@ -290,9 +324,18 @@ function MetaFormField({
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onFocus={onFocus}
         placeholder={placeholder}
+        list={suggestions?.length ? listId : undefined}
         className="w-full h-10 px-3 rounded-lg bg-background border border-border/40 text-sm focus:outline-none focus:border-primary/40"
       />
+      {suggestions && suggestions.length > 0 && (
+        <datalist id={listId}>
+          {suggestions.map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
+      )}
     </label>
   );
 }

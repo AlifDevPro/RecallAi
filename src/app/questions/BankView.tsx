@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Search,
   Filter,
@@ -15,117 +16,244 @@ import {
   Calendar,
   GraduationCap,
   X,
+  Loader2,
 } from "lucide-react";
 import { FilterDropdown } from "@/components/ui/FilterDropdown";
 import { PublicHeader } from "@/components/layout/PublicHeader";
-import {
-  PAPERS,
-  UNIVERSITIES,
-  DEPARTMENTS,
-  ALL_DEPARTMENTS,
-  EXAM_TYPES,
-  type Paper,
-} from "@/lib/data/question-papers";
+import type { Paper } from "@/lib/data/question-papers";
+import type { PaperFacets } from "@/lib/papers/query-papers";
+import { paperListParamsToSearchParams } from "@/lib/papers/query-papers";
 
-const SEM_OPTS = Array.from({ length: 8 }, (_, i) => ({ value: String(i + 1), label: `Semester ${i + 1}` }));
-const YEARS = Array.from({ length: 8 }, (_, i) => 2018 + i);
+const DEFAULT_FACETS: PaperFacets = {
+  universities: [],
+  departments: [],
+  courses: [],
+  years: [],
+  examTypes: [],
+  semesters: [],
+  departmentsByUniversity: {},
+};
+
+function parseListParam(value: string | null): string[] {
+  if (!value) return [];
+  return value.split(",").map((s) => s.trim()).filter(Boolean);
+}
 
 export function BankView() {
-  const [papers, setPapers] = useState<Paper[]>(PAPERS);
-  const [q, setQ] = useState("");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryKey = searchParams.toString();
+
+  const [papers, setPapers] = useState<Paper[]>([]);
+  const [total, setTotal] = useState(0);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [facets, setFacets] = useState<PaperFacets>(DEFAULT_FACETS);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const hasLoadedOnce = useRef(false);
+  const fetchGeneration = useRef(0);
+
+  const filters = useMemo(() => {
+    const sp = new URLSearchParams(queryKey);
+    const currentPage = Math.max(1, Number(sp.get("page")) || 1);
+    return {
+      q: sp.get("q")?.trim() || undefined,
+      university: parseListParam(sp.get("university")),
+      department: parseListParam(sp.get("department")),
+      course: parseListParam(sp.get("course")),
+      semester: parseListParam(sp.get("semester")),
+      year: parseListParam(sp.get("year")),
+      examType: parseListParam(sp.get("examType")),
+      verifiedOnly: sp.get("verifiedOnly") === "true",
+      hasPhoto: sp.get("hasPhoto") === "true",
+      hasDigital: sp.get("hasDigital") === "true",
+      page: currentPage,
+      limit: 24,
+    };
+  }, [queryKey]);
+
+  const q = searchParams.get("q") ?? "";
+  const [qInput, setQInput] = useState(q);
+  const page = filters.page;
+  const universities = filters.university;
+  const departments = filters.department;
+  const semesters = filters.semester;
+  const years = filters.year;
+  const examTypes = filters.examType;
+  const verifiedOnly = filters.verifiedOnly;
+  const withPhoto = filters.hasPhoto;
+  const withDigital = filters.hasDigital;
+  const courses = filters.course;
 
   useEffect(() => {
-    fetch("/api/public/papers")
+    fetch("/api/public/papers/facets")
       .then((r) => r.json())
-      .then((d) => {
-        if (d.papers?.length) setPapers(d.papers);
-      })
+      .then((d) => setFacets({ ...DEFAULT_FACETS, ...d }))
       .catch(() => {});
   }, []);
-  const [universities, setUniversities] = useState<string[]>([]);
-  const [departments, setDepartments] = useState<string[]>([]);
-  const [semesters, setSemesters] = useState<string[]>([]);
-  const [years, setYears] = useState<string[]>([]);
-  const [examTypes, setExamTypes] = useState<string[]>([]);
-  const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const [withPhoto, setWithPhoto] = useState(false);
-  const [withDigital, setWithDigital] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    setQInput(q);
+  }, [q]);
+
+  const updateParams = useCallback(
+    (patch: Record<string, string | string[] | boolean | undefined>) => {
+      const sp = new URLSearchParams(searchParams.toString());
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined || value === "" || (Array.isArray(value) && value.length === 0)) {
+          sp.delete(key);
+        } else if (typeof value === "boolean") {
+          if (value) sp.set(key, "true");
+          else sp.delete(key);
+        } else if (Array.isArray(value)) {
+          sp.set(key, value.join(","));
+        } else {
+          sp.set(key, value);
+        }
+      }
+      sp.delete("page");
+      router.replace(`/questions?${sp.toString()}`, { scroll: false });
+    },
+    [router, searchParams]
+  );
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (qInput !== q) updateParams({ q: qInput });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [qInput, q, updateParams]);
+
+  useEffect(() => {
+    const generation = ++fetchGeneration.current;
+    const controller = new AbortController();
+    const isFirstLoad = !hasLoadedOnce.current;
+
+    if (isFirstLoad) {
+      setInitialLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
+    setFetchError(null);
+
+    const params = paperListParamsToSearchParams(filters);
+
+    fetch(`/api/public/papers?${params}`, { signal: controller.signal })
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok || d.error) {
+          throw new Error(typeof d.error === "string" ? d.error : "Failed to load papers");
+        }
+        return d;
+      })
+      .then((d) => {
+        if (generation !== fetchGeneration.current) return;
+        setPapers(d.papers ?? []);
+        setTotal(d.total ?? 0);
+      })
+      .catch((e) => {
+        if (e instanceof Error && e.name === "AbortError") return;
+        if (generation !== fetchGeneration.current) return;
+        setFetchError(e instanceof Error ? e.message : "Failed to load papers");
+        if (isFirstLoad) {
+          setPapers([]);
+          setTotal(0);
+        }
+      })
+      .finally(() => {
+        if (generation !== fetchGeneration.current) return;
+        hasLoadedOnce.current = true;
+        setInitialLoading(false);
+        setIsRefreshing(false);
+      });
+
+    return () => controller.abort();
+    // filters is derived from queryKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryKey]);
 
   const deptOptions = useMemo(() => {
-    if (universities.length === 0) return ALL_DEPARTMENTS;
+    if (universities.length === 0) return facets.departments;
     const set = new Set<string>();
-    universities.forEach((u) => DEPARTMENTS[u]?.forEach((d) => set.add(d)));
+    universities.forEach((u) => facets.departmentsByUniversity[u]?.forEach((d) => set.add(d)));
     return Array.from(set).sort();
-  }, [universities]);
-
-  const results = useMemo(() => papers.filter((p) => {
-    if (universities.length && !universities.includes(p.university)) return false;
-    if (departments.length && !departments.includes(p.department)) return false;
-    if (semesters.length && !semesters.includes(String(p.semester))) return false;
-    if (years.length && !years.includes(String(p.year))) return false;
-    if (examTypes.length && !examTypes.includes(p.examType)) return false;
-    if (verifiedOnly && !p.verified) return false;
-    if (withPhoto && !p.hasPhoto) return false;
-    if (withDigital && !p.hasDigital) return false;
-    if (q.trim()) {
-      const needle = q.toLowerCase();
-      const hay = `${p.course} ${p.courseTitle} ${p.university} ${p.department}`.toLowerCase();
-      if (!hay.includes(needle)) return false;
-    }
-    return true;
-  }), [papers, universities, departments, semesters, years, examTypes, verifiedOnly, withPhoto, withDigital, q]);
+  }, [universities, facets]);
 
   const activeFilterCount =
-    universities.length + departments.length + semesters.length + years.length + examTypes.length +
-    (verifiedOnly ? 1 : 0) + (withPhoto ? 1 : 0) + (withDigital ? 1 : 0);
+    universities.length +
+    departments.length +
+    semesters.length +
+    years.length +
+    examTypes.length +
+    (verifiedOnly ? 1 : 0) +
+    (withPhoto ? 1 : 0) +
+    (withDigital ? 1 : 0);
 
   const clearAll = () => {
-    setUniversities([]); setDepartments([]); setSemesters([]); setYears([]);
-    setExamTypes([]); setVerifiedOnly(false); setWithPhoto(false); setWithDigital(false);
+    router.replace("/questions", { scroll: false });
+    setQInput("");
   };
+
+  const totalPages = Math.max(1, Math.ceil(total / 24));
 
   const filterContent = (
     <div className="space-y-4">
       <FilterDropdown
         label="University"
-        options={UNIVERSITIES.map((u) => ({ value: u, label: u }))}
+        options={facets.universities.map((u) => ({ value: u, label: u }))}
         value={universities}
-        onChange={setUniversities}
-        multi searchable placeholder="All universities"
+        onChange={(v) => updateParams({ university: v })}
+        multi
+        searchable
+        placeholder="All universities"
+      />
+      <FilterDropdown
+        label="Course"
+        options={facets.courses.map((c) => ({ value: c, label: c }))}
+        value={courses}
+        onChange={(v) => updateParams({ course: v })}
+        multi
+        searchable
+        placeholder="All courses"
       />
       <FilterDropdown
         label="Department"
         options={deptOptions.map((d) => ({ value: d, label: d }))}
         value={departments}
-        onChange={setDepartments}
-        multi searchable placeholder="All departments"
+        onChange={(v) => updateParams({ department: v })}
+        multi
+        searchable
+        placeholder="All departments"
       />
       <FilterDropdown
         label="Semester"
-        options={SEM_OPTS}
+        options={facets.semesters.map((s) => ({ value: s, label: `Semester ${s}` }))}
         value={semesters}
-        onChange={setSemesters}
-        multi placeholder="Any semester"
+        onChange={(v) => updateParams({ semester: v })}
+        multi
+        placeholder="Any semester"
       />
       <FilterDropdown
         label="Year"
-        options={YEARS.map((y) => ({ value: String(y), label: String(y) }))}
+        options={facets.years.map((y) => ({ value: String(y), label: String(y) }))}
         value={years}
-        onChange={setYears}
-        multi placeholder="Any year"
+        onChange={(v) => updateParams({ year: v })}
+        multi
+        placeholder="Any year"
       />
       <FilterDropdown
         label="Exam type"
-        options={EXAM_TYPES.map((t) => ({ value: t, label: t }))}
+        options={facets.examTypes.map((t) => ({ value: t, label: t }))}
         value={examTypes}
-        onChange={setExamTypes}
-        multi placeholder="Any type"
+        onChange={(v) => updateParams({ examType: v })}
+        multi
+        placeholder="Any type"
       />
       <div className="space-y-2 pt-2 border-t border-border">
-        <ToggleRow checked={verifiedOnly} onChange={setVerifiedOnly} label="Verified only" icon={<CheckCircle2 className="size-3.5 text-[var(--exam-ok)]" />} />
-        <ToggleRow checked={withPhoto} onChange={setWithPhoto} label="Has photo / scan" icon={<ImageIcon className="size-3.5 text-accent" />} />
-        <ToggleRow checked={withDigital} onChange={setWithDigital} label="Has digital text" icon={<FileText className="size-3.5 text-primary" />} />
+        <ToggleRow checked={verifiedOnly} onChange={(v) => updateParams({ verifiedOnly: v })} label="Verified only" icon={<CheckCircle2 className="size-3.5 text-[var(--exam-ok)]" />} />
+        <ToggleRow checked={withPhoto} onChange={(v) => updateParams({ hasPhoto: v })} label="Has photo / scan" icon={<ImageIcon className="size-3.5 text-accent" />} />
+        <ToggleRow checked={withDigital} onChange={(v) => updateParams({ hasDigital: v })} label="Has digital text" icon={<FileText className="size-3.5 text-primary" />} />
       </div>
       {activeFilterCount > 0 && (
         <button onClick={clearAll} className="w-full text-xs text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1.5 py-2 border border-border rounded-md">
@@ -139,10 +267,8 @@ export function BankView() {
     <div className="min-h-screen bg-background text-foreground">
       <PublicHeader />
       <main>
-        {/* Hero */}
         <section className="relative overflow-hidden border-b border-border">
           <div className="aurora absolute -top-20 left-1/4 size-[420px] rounded-full bg-primary/20 blur-3xl" />
-          <div className="aurora absolute -bottom-32 right-0 size-[420px] rounded-full bg-accent/15 blur-3xl" style={{ animationDelay: "-8s" }} />
           <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-12 lg:py-16">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-mono font-semibold uppercase tracking-wider">
               <Library className="size-3" /> Real past papers · digital + scan
@@ -151,14 +277,14 @@ export function BankView() {
               Every past paper. Both the original scan and a clean digital copy.
             </h1>
             <p className="mt-3 text-sm sm:text-base text-muted-foreground max-w-2xl">
-              Filter by university, department, semester, year and exam type. Switch between the photo of the real paper and the AI-cleaned digital version on every entry.
+              Filter by university, course, department, semester, year and exam type. Search updates results from the database.
             </p>
             <div className="mt-6 flex flex-col sm:flex-row gap-2 max-w-2xl">
               <div className="relative flex-1">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
                 <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
+                  value={qInput}
+                  onChange={(e) => setQInput(e.target.value)}
                   placeholder="Search by course code, title or university…"
                   className="w-full h-12 pl-12 pr-4 rounded-md bg-surface border border-border text-sm focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-ring"
                 />
@@ -167,18 +293,10 @@ export function BankView() {
                 <Upload className="size-4" /> Contribute a paper
               </Link>
             </div>
-            <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap">
-              <span>Try:</span>
-              {["CSE 213", "IIT Bombay Final 2023", "DBMS midsem", "Algorithms"].map((s) => (
-                <button key={s} onClick={() => setQ(s)} className="px-2 py-0.5 rounded bg-surface border border-border hover:border-primary/50">{s}</button>
-              ))}
-            </div>
           </div>
         </section>
 
-        {/* Body */}
         <section className="max-w-6xl mx-auto px-4 sm:px-6 py-8 grid lg:grid-cols-[280px_1fr] gap-6">
-          {/* Filter rail */}
           <aside className="hidden lg:block">
             <div className="rounded-md border border-border bg-surface p-4 sticky top-20">
               <div className="flex items-center justify-between mb-4">
@@ -191,7 +309,6 @@ export function BankView() {
             </div>
           </aside>
 
-          {/* Mobile drawer trigger */}
           <button
             onClick={() => setDrawerOpen(true)}
             className="lg:hidden inline-flex items-center justify-center gap-1.5 px-3 h-10 rounded-md bg-surface border border-border text-sm"
@@ -199,15 +316,52 @@ export function BankView() {
             <Filter className="size-4" /> Filters {activeFilterCount > 0 && `(${activeFilterCount})`}
           </button>
 
-          {/* Results */}
           <div>
+            {fetchError && (
+              <p className="mb-4 text-sm text-again bg-again/10 border border-again/30 rounded-lg px-3 py-2">
+                {fetchError}
+              </p>
+            )}
             <div className="flex items-center justify-between mb-4">
-              <div className="text-sm text-muted-foreground">
-                <span className="font-semibold text-foreground">{results.length}</span> paper{results.length === 1 ? "" : "s"}
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
+                {isRefreshing && <Loader2 className="size-4 animate-spin" />}
+                <span className="font-semibold text-foreground">{total}</span> paper{total === 1 ? "" : "s"}
               </div>
+              {totalPages > 1 && (
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    disabled={page <= 1 || isRefreshing}
+                    onClick={() => {
+                      const sp = new URLSearchParams(searchParams.toString());
+                      sp.set("page", String(page - 1));
+                      router.replace(`/questions?${sp.toString()}`, { scroll: false });
+                    }}
+                    className="px-2 py-1 rounded border border-border disabled:opacity-40"
+                  >
+                    Prev
+                  </button>
+                  <span className="text-muted-foreground">{page} / {totalPages}</span>
+                  <button
+                    disabled={page >= totalPages || isRefreshing}
+                    onClick={() => {
+                      const sp = new URLSearchParams(searchParams.toString());
+                      sp.set("page", String(page + 1));
+                      router.replace(`/questions?${sp.toString()}`, { scroll: false });
+                    }}
+                    className="px-2 py-1 rounded border border-border disabled:opacity-40"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
             </div>
 
-            {results.length === 0 ? (
+            {initialLoading && papers.length === 0 ? (
+              <div className="rounded-md border border-border bg-surface p-10 text-center text-muted-foreground">
+                <Loader2 className="size-8 mx-auto animate-spin" />
+                <p className="mt-3 text-sm">Loading papers…</p>
+              </div>
+            ) : papers.length === 0 ? (
               <div className="rounded-md border border-dashed border-border p-10 text-center">
                 <Library className="size-8 mx-auto text-muted-foreground" />
                 <div className="mt-3 font-semibold">No papers match these filters</div>
@@ -218,14 +372,15 @@ export function BankView() {
               </div>
             ) : (
               <div className="grid sm:grid-cols-2 gap-3">
-                {results.map((p) => <PaperCard key={p.id} p={p} />)}
+                {papers.map((p) => (
+                  <PaperCard key={p.id} p={p} />
+                ))}
               </div>
             )}
           </div>
         </section>
       </main>
 
-      {/* Mobile drawer */}
       {drawerOpen && (
         <div className="lg:hidden fixed inset-0 z-50 bg-background/80 backdrop-blur" onClick={() => setDrawerOpen(false)}>
           <div className="absolute bottom-0 inset-x-0 max-h-[85vh] overflow-y-auto rounded-t-xl bg-card border-t border-border p-5" onClick={(e) => e.stopPropagation()}>
@@ -237,7 +392,7 @@ export function BankView() {
             </div>
             {filterContent}
             <button onClick={() => setDrawerOpen(false)} className="mt-5 w-full h-11 rounded-md bg-primary text-primary-foreground font-semibold">
-              Show {results.length} paper{results.length === 1 ? "" : "s"}
+              Show {total} paper{total === 1 ? "" : "s"}
             </button>
           </div>
         </div>
@@ -266,10 +421,7 @@ function ToggleRow({ checked, onChange, label, icon }: { checked: boolean; onCha
 
 function PaperCard({ p }: { p: Paper }) {
   return (
-    <Link
-      href={`/questions/${p.id}`}
-      className="group rounded-md border border-border bg-surface p-4 hover:border-primary/50 transition-colors flex flex-col"
-    >
+    <Link href={`/questions/${p.id}`} className="group rounded-md border border-border bg-surface p-4 hover:border-primary/50 transition-colors flex flex-col">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">

@@ -41,12 +41,12 @@ export async function POST(request: Request) {
     let paperContext = "";
     if (config.paperId) {
       const { data: paper } = await supabase
-        .from("question_papers")
-        .select("title, institution, year, subject")
+        .from("papers")
+        .select("course, course_title, university, year")
         .eq("id", config.paperId)
         .single();
       if (paper) {
-        paperContext = `Reference paper: ${paper.title} (${paper.institution}, ${paper.year})`;
+        paperContext = `Reference paper: ${paper.course_title} (${paper.course}, ${paper.university}, ${paper.year})`;
       }
     }
 

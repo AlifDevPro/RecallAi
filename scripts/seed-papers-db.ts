@@ -2,7 +2,7 @@
  * Upsert fixture papers into Supabase `papers` table.
  * Run: npx tsx scripts/seed-papers-db.ts
  */
-import { PAPERS } from "../src/lib/data/question-papers";
+import { PAPERS } from "../src/lib/data/question-papers.fixtures";
 import { paperToDbRow } from "../src/lib/papers/map-paper";
 import { createClient } from "@supabase/supabase-js";
 

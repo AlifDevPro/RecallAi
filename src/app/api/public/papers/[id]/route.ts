@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getPaper } from "@/lib/data/question-papers";
+import { createServiceClient } from "@/lib/supabase/service";
 import { mapDbPaper } from "@/lib/papers/map-paper";
+import { resolvePaperScanUrls } from "@/lib/papers/scan-urls";
+import { getPaper } from "@/lib/data/question-papers.fixtures";
 
 export async function GET(
   _request: Request,
@@ -10,20 +12,26 @@ export async function GET(
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: paper } = await supabase
-    .from("papers")
-    .select("*")
-    .eq("id", id)
-    .single();
+  const { data: paper } = await supabase.from("papers").select("*").eq("id", id).single();
 
   if (paper) {
-    return NextResponse.json({ paper: mapDbPaper(paper) });
+    let mapped = mapDbPaper(paper);
+    try {
+      const service = createServiceClient();
+      mapped = await resolvePaperScanUrls(service, mapped);
+      await service.rpc("increment_paper_views", { paper_id: id });
+    } catch {
+      /* views/signing optional if service key missing locally */
+    }
+    return NextResponse.json({ paper: mapped, source: "db" });
   }
 
-  const fixture = getPaper(id);
-  if (!fixture) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (process.env.NODE_ENV === "development") {
+    const fixture = getPaper(id);
+    if (fixture) {
+      return NextResponse.json({ paper: fixture, source: "fixture" });
+    }
   }
 
-  return NextResponse.json({ paper: fixture });
+  return NextResponse.json({ error: "Not found" }, { status: 404 });
 }

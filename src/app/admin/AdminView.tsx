@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   Shield,
@@ -1018,17 +1019,74 @@ type SubmissionRow = {
   course: string;
   topic: string;
   created_at: string;
+  questionCount?: number;
 };
 
 function ModerationPanel() {
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([]);
+  const [reviewId, setReviewId] = useState<string | null>(null);
+  const [reviewDetail, setReviewDetail] = useState<{
+    submission: Record<string, unknown>;
+    questions: Record<string, unknown>[];
+  } | null>(null);
+  const [actionId, setActionId] = useState<string | null>(null);
+  const [moderationMessage, setModerationMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+    paperId?: string;
+  } | null>(null);
 
-  useEffect(() => {
+  const loadSubmissions = () => {
     fetch("/api/admin/submissions")
       .then((r) => r.json())
       .then((d) => setSubmissions(d.submissions ?? []))
       .catch(() => setSubmissions([]));
+  };
+
+  useEffect(() => {
+    loadSubmissions();
   }, []);
+
+  const updateSubmissionStatus = async (id: string, status: string) => {
+    setActionId(id);
+    setModerationMessage(null);
+    try {
+      const res = await fetch("/api/admin/submissions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status }),
+      });
+      const data = (await res.json()) as { error?: string; paperId?: string };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Update failed");
+      }
+      if (status === "approved" && data.paperId) {
+        setModerationMessage({
+          type: "success",
+          text: "Published to the Question Bank.",
+          paperId: data.paperId,
+        });
+      } else if (status === "rejected") {
+        setModerationMessage({ type: "success", text: "Submission rejected." });
+      }
+      loadSubmissions();
+    } catch (e) {
+      setModerationMessage({
+        type: "error",
+        text: e instanceof Error ? e.message : "Update failed",
+      });
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const openReview = (id: string) => {
+    setReviewId(id);
+    fetch(`/api/admin/submissions/${id}`)
+      .then((r) => r.json())
+      .then((d) => setReviewDetail(d))
+      .catch(() => setReviewDetail(null));
+  };
 
   type ModItem = {
     id: string;
@@ -1037,22 +1095,47 @@ function ModerationPanel() {
     reported: string;
     user: string;
     rawId: string;
+    status: string;
+    questionCount: number;
   };
 
-  const items: ModItem[] =
-    submissions.length > 0
-      ? submissions.map((s) => ({
-          id: s.id.slice(0, 8),
-          severity: s.status === "pending" ? "medium" : "low",
-          type: `Question upload — ${s.topic || s.course}`,
-          reported: new Date(s.created_at).toLocaleDateString(),
-          user: s.institution || "unknown",
-          rawId: s.id,
-        }))
-      : moderation.map((m) => ({ ...m, rawId: m.id }));
+  const items: ModItem[] = submissions.map((s) => ({
+    id: s.id.slice(0, 8),
+    severity: s.status === "pending" ? "medium" : s.status === "rejected" ? "high" : "low",
+    type: `Question upload — ${s.topic || s.course} (${s.questionCount} questions)`,
+    reported: new Date(s.created_at).toLocaleDateString(),
+    user: s.institution || "unknown",
+    rawId: s.id,
+    status: s.status,
+    questionCount: s.questionCount ?? 0,
+  }));
 
   return (
     <div className="space-y-4">
+      {moderationMessage && (
+        <div
+          className={`p-3 rounded-xl border text-sm ${
+            moderationMessage.type === "success"
+              ? "bg-good/10 border-good/30 text-good"
+              : "bg-destructive/10 border-destructive/30 text-destructive"
+          }`}
+        >
+          <p>{moderationMessage.text}</p>
+          {moderationMessage.paperId && (
+            <Link
+              href={`/questions/${moderationMessage.paperId}`}
+              className="inline-block mt-2 font-semibold underline underline-offset-2"
+            >
+              View paper in Question Bank →
+            </Link>
+          )}
+        </div>
+      )}
+      {items.length === 0 && (
+        <div className="p-8 rounded-2xl border border-dashed border-border/40 text-center text-sm text-muted-foreground">
+          No question submissions in the queue.
+        </div>
+      )}
       {items.map((m) => (
         <div
           key={m.id}
@@ -1090,32 +1173,62 @@ function ModerationPanel() {
             </div>
           </div>
           <div className="flex gap-2 text-xs">
-            <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-raised border border-border/20 hover:border-border/60">
-              <Eye className="size-3.5" /> Review
-            </button>
             <button
               type="button"
-              onClick={() =>
-                fetch("/api/admin/submissions", {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ id: m.rawId, status: "approved" }),
-                }).then(() =>
-                  fetch("/api/admin/submissions")
-                    .then((r) => r.json())
-                    .then((d) => setSubmissions(d.submissions ?? []))
-                )
-              }
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-good/10 text-good border border-good/20 hover:bg-good/20"
+              onClick={() => openReview(m.rawId)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-raised border border-border/20 hover:border-border/60"
             >
-              <CheckCircle2 className="size-3.5" /> Approve
+              <Eye className="size-3.5" /> Review
             </button>
-            <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20">
-              <Ban className="size-3.5" /> Suspend
-            </button>
+            {m.status === "pending" && (
+              <>
+                <button
+                  type="button"
+                  disabled={actionId === m.rawId}
+                  onClick={() => void updateSubmissionStatus(m.rawId, "approved")}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-good/10 text-good border border-good/20 hover:bg-good/20 disabled:opacity-50"
+                >
+                  <CheckCircle2 className="size-3.5" />
+                  {actionId === m.rawId ? "Approving…" : "Approve"}
+                </button>
+                <button
+                  type="button"
+                  disabled={actionId === m.rawId}
+                  onClick={() => void updateSubmissionStatus(m.rawId, "rejected")}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20 disabled:opacity-50"
+                >
+                  <Ban className="size-3.5" />
+                  {actionId === m.rawId ? "Rejecting…" : "Reject"}
+                </button>
+              </>
+            )}
           </div>
         </div>
       ))}
+      {reviewId && reviewDetail && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center p-4" onClick={() => { setReviewId(null); setReviewDetail(null); }}>
+          <div className="max-w-lg w-full max-h-[80vh] overflow-y-auto rounded-2xl bg-surface border border-border p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold">Submission review</h3>
+              <button type="button" onClick={() => { setReviewId(null); setReviewDetail(null); }} className="size-8 rounded-md hover:bg-surface-raised flex items-center justify-center">
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="text-xs text-muted-foreground space-y-1 mb-4">
+              <div>{String(reviewDetail.submission.institution)} · {String(reviewDetail.submission.course)}</div>
+              <div>{String(reviewDetail.submission.term)} {String(reviewDetail.submission.year ?? "")}</div>
+              <div>Status: {String(reviewDetail.submission.status)}</div>
+            </div>
+            <ul className="space-y-2 text-sm">
+              {reviewDetail.questions.map((q, i) => (
+                <li key={i} className="p-2 rounded border border-border/40 bg-surface-raised/40">
+                  {String(q.cleaned_text ?? q.raw_text ?? "").slice(0, 200)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
       <button className="w-full p-4 rounded-2xl border border-dashed border-border/40 text-sm text-muted-foreground hover:border-border hover:text-foreground transition-colors flex items-center justify-center gap-2">
         <XCircle className="size-4" /> Show resolved reports (87)
       </button>

@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { ingestDocument } from "@/lib/vectors/ingest";
 import type { ExtractedQuestion } from "@/lib/ai/ocr";
 
 type SubmitBody = {
   extracted: ExtractedQuestion[];
+  filePaths?: string[];
   metadata?: {
     institution?: string;
     course?: string;
@@ -33,28 +35,54 @@ export async function POST(request: Request) {
   }
 
   const meta = body.metadata ?? {};
+  const filePaths = body.filePaths ?? [];
 
-  const { data: submission, error: subError } = await supabase
-    .from("question_submissions")
-    .insert({
-      user_id: user?.id ?? null,
-      status: "pending",
-      institution: meta.institution ?? body.extracted[0]?.inst ?? "",
-      course: meta.course ?? "",
-      semester: meta.semester ?? "",
-      year: meta.year ?? body.extracted[0]?.year,
-      term: meta.term ?? body.extracted[0]?.term ?? "",
-      topic: meta.topic ?? body.extracted[0]?.topic ?? "",
-    })
-    .select("id")
-    .single();
+  const insertPayload = {
+    user_id: user?.id ?? null,
+    status: "pending",
+    institution: meta.institution ?? body.extracted[0]?.inst ?? "",
+    course: meta.course ?? "",
+    semester: meta.semester ?? "",
+    year: meta.year ?? body.extracted[0]?.year,
+    term: meta.term ?? body.extracted[0]?.term ?? "",
+    topic: meta.topic ?? body.extracted[0]?.topic ?? "",
+    file_paths: filePaths,
+  };
+
+  let submission: { id: string } | null = null;
+  let subError: { message: string } | null = null;
+
+  if (user) {
+    const result = await supabase
+      .from("question_submissions")
+      .insert(insertPayload)
+      .select("id")
+      .single();
+    submission = result.data;
+    subError = result.error;
+  } else {
+    try {
+      const service = createServiceClient();
+      const result = await service
+        .from("question_submissions")
+        .insert(insertPayload)
+        .select("id")
+        .single();
+      submission = result.data;
+      subError = result.error;
+    } catch {
+      subError = { message: "Submit failed — service client unavailable" };
+    }
+  }
 
   if (subError || !submission) {
     return NextResponse.json({ error: subError?.message ?? "Submit failed" }, { status: 500 });
   }
 
+  const questionClient = user ? supabase : createServiceClient();
+
   for (const q of body.extracted) {
-    const { data: row } = await supabase
+    const { data: row, error: qErr } = await questionClient
       .from("submitted_questions")
       .insert({
         submission_id: submission.id,
@@ -70,21 +98,22 @@ export async function POST(request: Request) {
       .select("id")
       .single();
 
-    if (row) {
-      const text = `${q.cleaned}\nTopic: ${q.topic}\nInstitution: ${q.inst}\nYear: ${q.year}\nTerm: ${q.term}\nMarks: ${q.marks}`;
-      await ingestDocument({
-        sourceType: "question",
-        sourceId: row.id,
-        userId: user?.id ?? null,
-        title: `${q.topic} — ${q.term} ${q.year}`,
-        text,
-        metadata: {
-          visibility: user ? "private" : "public",
-          institution: q.inst,
-          marks: q.marks,
-        },
-      });
-    }
+    if (qErr || !row) continue;
+
+    const text = `${q.cleaned}\nTopic: ${q.topic}\nInstitution: ${q.inst}\nYear: ${q.year}\nTerm: ${q.term}\nMarks: ${q.marks}`;
+    await ingestDocument({
+      sourceType: "question",
+      sourceId: row.id,
+      userId: user?.id ?? null,
+      title: `${q.topic} — ${q.term} ${q.year}`,
+      text,
+      metadata: {
+        visibility: user ? "private" : "public",
+        institution: q.inst,
+        marks: q.marks,
+        submissionId: submission.id,
+      },
+    });
   }
 
   return NextResponse.json({
