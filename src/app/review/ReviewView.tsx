@@ -56,7 +56,7 @@ function ReviewSkeleton() {
         <div className="h-4 w-16 bg-surface-raised rounded" />
       </div>
       <div className="h-1 bg-surface-raised rounded-full mb-8" />
-      <div className="min-h-[280px] bg-surface rounded-2xl border border-border/20 p-8 lg:p-10">
+      <div className="min-h-70 bg-surface rounded-2xl border border-border/20 p-8 lg:p-10">
         <div className="h-3 w-24 bg-surface-raised rounded mb-6" />
         <div className="space-y-3">
           <div className="h-5 w-full bg-surface-raised rounded" />
@@ -154,30 +154,6 @@ function ReviewViewInner() {
     return () => clearInterval(t);
   }, [step]);
 
-  useEffect(() => {
-    if (step !== "active") return;
-    const onKey = (e: KeyboardEvent) => {
-      if (ratingInFlight) return;
-      if (e.key === " " && !flipped && e.target === document.body) {
-        e.preventDefault();
-        setFlipped(true);
-      }
-      if (flipped && ["1", "2", "3", "4"].includes(e.key)) {
-        const ratings: ReviewRating[] = ["again", "hard", "good", "easy"];
-        const r = ratings[Number(e.key) - 1];
-        void handleRate(r);
-      }
-      if (e.key === "Escape" && step === "active") {
-        if (window.confirm("Exit review session? Progress on the current card is not saved.")) {
-          setStep("setup");
-        }
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, flipped, ratingInFlight, index, cards]);
-
   const invalidateAfterReview = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     void queryClient.invalidateQueries({ queryKey: ["schedule-summary"] });
@@ -223,7 +199,7 @@ function ReviewViewInner() {
     }
   };
 
-  const handleRate = async (r: ReviewRating) => {
+  const handleRate = useCallback(async (r: ReviewRating) => {
     const card = cards[index];
     if (!card || ratingInFlight) return;
 
@@ -245,9 +221,15 @@ function ReviewViewInner() {
         setFlipped(false);
         setTextAnswer("");
       } else {
-        const stats = await fetchJson<{ totalDue: number }>("/api/me/review/stats");
-        setRemainingDue(Math.max(0, stats.totalDue));
         setStep("complete");
+        setRemainingDue(0);
+        void fetchJson<{ totalDue: number }>("/api/me/review/stats")
+          .then((stats) => {
+            setRemainingDue(Math.max(0, stats.totalDue));
+          })
+          .catch(() => {
+            setRemainingDue(0);
+          });
         invalidateAfterReview();
       }
     } catch (e) {
@@ -255,7 +237,7 @@ function ReviewViewInner() {
     } finally {
       setRatingInFlight(false);
     }
-  };
+  }, [cards, index, ratingInFlight, invalidateAfterReview]);
 
   const handleSkip = () => {
     if (index >= cards.length - 1) return;
@@ -270,10 +252,40 @@ function ReviewViewInner() {
     setRatingError(null);
   };
 
+  useEffect(() => {
+    if (step !== "active") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (ratingInFlight) return;
+      if (e.key === " " && !flipped && e.target === document.body) {
+        e.preventDefault();
+        setFlipped(true);
+      }
+      if (flipped && ["1", "2", "3", "4"].includes(e.key)) {
+        const ratings: ReviewRating[] = ["again", "hard", "good", "easy"];
+        const r = ratings[Number(e.key) - 1];
+        void handleRate(r);
+      }
+      if (e.key === "Escape" && step === "active") {
+        if (window.confirm("Exit review session? Progress on the current card is not saved.")) {
+          setStep("setup");
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, flipped, ratingInFlight, index, cards]);
+
   const card = cards[index];
   const progress = cards.length ? ((index + (flipped ? 1 : 0)) / cards.length) * 100 : 0;
   const totalDue = statsQuery.data?.totalDue ?? 0;
-  const estimatedMinutes = Math.max(1, Math.ceil(Math.min(sessionLimit, totalDue || sessionLimit) * MINUTES_PER_CARD));
+  const hasTopicFilter = topicFilter.trim().length > 0;
+  const displayDue = totalDue > 0 ? totalDue : hasTopicFilter ? 1 : 0;
+  const startMode: "due" | "preview" = totalDue > 0 ? "due" : "preview";
+  const estimatedMinutes = Math.max(
+    1,
+    Math.ceil(Math.min(sessionLimit, displayDue || sessionLimit) * MINUTES_PER_CARD)
+  );
   const minutesLeft = Math.max(0, Math.ceil((cards.length - index) * MINUTES_PER_CARD));
 
   const layout = (content: React.ReactNode) => (
@@ -288,24 +300,6 @@ function ReviewViewInner() {
     return layout(<SetupSkeleton />);
   }
 
-  if (statsQuery.isError && step === "setup") {
-    return layout(
-      <div className="flex items-center justify-center min-h-[50vh] px-6 text-center">
-        <div>
-          <h1 className="text-xl font-semibold text-again">Could not load review stats</h1>
-          <p className="text-sm text-muted-foreground mt-2">{statsQuery.error.message}</p>
-          <button
-            type="button"
-            onClick={() => void statsQuery.refetch()}
-            className="mt-4 text-sm text-primary hover:underline"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   if (step === "setup") {
     return layout(
       <div className="max-w-xl mx-auto px-6 py-10 lg:py-16">
@@ -315,8 +309,8 @@ function ReviewViewInner() {
           </div>
           <h1 className="text-2xl font-bold">Review Session</h1>
           <p className="text-sm text-muted-foreground mt-2">
-            {totalDue > 0
-              ? `${totalDue} card${totalDue !== 1 ? "s" : ""} due across your active topics`
+            {displayDue > 0
+              ? `${displayDue} card${displayDue !== 1 ? "s" : ""} due across your active topics`
               : "You're caught up — study ahead or add more cards"}
           </p>
         </div>
@@ -324,7 +318,7 @@ function ReviewViewInner() {
         <div className="rounded-2xl border border-border/20 bg-surface p-5 sm:p-6 space-y-5 mb-6">
           <div className="grid grid-cols-3 gap-3 text-center">
             <div className="p-3 rounded-xl bg-surface-raised">
-              <p className="text-2xl font-bold tabular-nums">{totalDue}</p>
+              <p className="text-2xl font-bold tabular-nums">{displayDue}</p>
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-1">Due</p>
             </div>
             <div className="p-3 rounded-xl bg-surface-raised">
@@ -386,19 +380,19 @@ function ReviewViewInner() {
         )}
 
         <div className="space-y-3">
-          {totalDue > 0 ? (
+          {displayDue > 0 ? (
             <button
               type="button"
               disabled={sessionLoading}
-              onClick={() => void startSession("due")}
+              onClick={() => void startSession(startMode)}
               className="w-full inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
-              {sessionLoading && sessionMode === "due" ? (
+              {sessionLoading && sessionMode === startMode ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <Zap className="size-4" />
               )}
-              Start review ({Math.min(sessionLimit, totalDue)} due)
+              Start review ({Math.min(sessionLimit, displayDue)} {startMode === "due" ? "due" : "cards"})
               <ChevronRight className="size-4" />
             </button>
           ) : (
@@ -586,9 +580,7 @@ function ReviewViewInner() {
 
       <div className="relative mb-8">
         <div
-          className={`min-h-[280px] bg-surface rounded-2xl border border-border/20 p-8 lg:p-10 flex flex-col cursor-pointer transition-all ${
-            flipped ? "border-primary/20" : "hover:border-border/40"
-          }`}
+          className={`min-h-70 bg-surface rounded-2xl border border-border/20 p-8 lg:p-10 flex flex-col cursor-pointer transition-all ${flipped ? "border-primary/20" : "hover:border-border/40"}`}
           onClick={() => !flipped && setFlipped(true)}
         >
           {!flipped ? (

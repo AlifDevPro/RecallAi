@@ -37,6 +37,42 @@ export type ReviewStats = {
   totalDue: number;
 };
 
+function cleanText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function isPlaceholderText(value: string): boolean {
+  const normalized = cleanText(value).toLowerCase();
+  return /^.+\s+card\s+\d+$/.test(normalized) || /^answer\s+\d+$/.test(normalized);
+}
+
+function buildFallbackPrompt(topicName: string, position: number): string {
+  const templates = [
+    `What are the core ideas in ${topicName}?`,
+    `How would you summarize the main concept in ${topicName}?`,
+    `What detail about ${topicName} should you remember here?`,
+    `What is the key takeaway from ${topicName}?`,
+  ];
+
+  return templates[position % templates.length];
+}
+
+function formatReviewQuestion(front: string, topicName: string, position: number): string {
+  const cleaned = cleanText(front);
+  if (!cleaned || isPlaceholderText(cleaned)) {
+    return buildFallbackPrompt(topicName, position);
+  }
+  return cleaned;
+}
+
+function formatReviewAnswer(back: string, topicName: string): string {
+  const cleaned = cleanText(back);
+  if (!cleaned || isPlaceholderText(cleaned)) {
+    return `Review the main notes for ${topicName}.`;
+  }
+  return cleaned;
+}
+
 async function getActiveTopics(
   supabase: SupabaseClient,
   userId: string,
@@ -152,16 +188,17 @@ export async function getReviewQueue(
   const cardMap = new Map((cards ?? []).map((c) => [c.id, c]));
   const ordered: ReviewQueueCard[] = [];
 
-  for (const row of schedRows ?? []) {
+  for (const [index, row] of (schedRows ?? []).entries()) {
     const c = cardMap.get(row.card_id);
     if (!c) continue;
     const topic = topicMap.get(c.topic_id);
+    const topicName = topic?.name ?? "General";
     ordered.push({
       id: c.id,
-      topic: topic?.name ?? "General",
+      topic: topicName,
       topicSlug: topic?.slug ?? "",
-      question: c.front,
-      answer: c.back,
+      question: formatReviewQuestion(c.front, topicName, index),
+      answer: formatReviewAnswer(c.back, topicName),
       mastery: Number(row.mastery),
       dueAt: row.due_at,
     });

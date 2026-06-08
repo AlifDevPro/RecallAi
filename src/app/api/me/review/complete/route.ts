@@ -73,13 +73,15 @@ export async function POST(request: Request) {
     .single();
 
   if (card) {
-    await ingestDocument({
+    void ingestDocument({
       sourceType: "card",
       sourceId: cardId,
       userId: user.id,
       title: card.front,
       text: `${card.front}\n${card.back}`,
       metadata: { visibility: "private" },
+    }).catch((error) => {
+      console.error("review ingest failed:", error);
     });
   }
 

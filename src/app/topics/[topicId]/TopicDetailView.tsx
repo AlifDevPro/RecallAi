@@ -270,15 +270,13 @@ export function TopicDetailView() {
                   <Pause className="size-4" />
                   Pause
                 </button>
-                {dueCount > 0 && (
-                  <Link
-                    href={`/review?topic=${topicId}`}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition-colors"
-                  >
-                    <PlayCircle className="size-4" />
-                    Review {dueCount} due
-                  </Link>
-                )}
+                <Link
+                  href={`/review?topic=${topicId}`}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition-colors"
+                >
+                  <PlayCircle className="size-4" />
+                  {dueCount > 0 ? `Review ${dueCount} due` : `Review ${cards.length} cards`}
+                </Link>
                 <button
                   onClick={() => timerRef.current?.start()}
                   className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border border-border/40 rounded-xl hover:bg-surface-raised transition-colors"
