@@ -67,29 +67,23 @@ export function Sidebar({
   displayName?: string;
 } = {}) {
   const pathname = usePathname();
-  const [reviewCount, setReviewCount] = useState<number | null>(
-    reviewDue !== undefined ? reviewDue : null
-  );
   const [notifCount, setNotifCount] = useState<number | null>(null);
 
   const reviewStatsQuery = useQuery({
     queryKey: ["review-stats"],
     queryFn: async () => {
-      const r = await fetch("/api/me/review/stats");
-      if (!r.ok) throw new Error("Failed to load review stats");
-      return r.json() as Promise<{ totalDue: number }>;
+      try {
+        const r = await fetch("/api/me/review/stats");
+        if (!r.ok) return { totalDue: 0 };
+        const data = (await r.json().catch(() => ({}))) as { totalDue?: number };
+        return { totalDue: Number(data.totalDue ?? 0) };
+      } catch {
+        return { totalDue: 0 };
+      }
     },
     enabled: reviewDue === undefined,
     refetchInterval: 60_000,
   });
-
-  useEffect(() => {
-    if (reviewDue !== undefined) {
-      setReviewCount(reviewDue);
-    } else {
-      setReviewCount(reviewStatsQuery.data?.totalDue ?? null);
-    }
-  }, [reviewDue, reviewStatsQuery.data]);
 
   useEffect(() => {
     const loadNotifications = () => {
@@ -112,6 +106,8 @@ export function Sidebar({
     return () => clearTimeout(timer);
   }, []);
 
+  const reviewCount = reviewDue ?? reviewStatsQuery.data?.totalDue ?? null;
+
   const learnItems = baseLearnItems.map((item) =>
     item.to === "/review" && reviewCount != null && reviewCount > 0
       ? { ...item, badge: String(reviewCount) }
@@ -130,9 +126,9 @@ export function Sidebar({
   return (
     <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-64 bg-surface-dim border-r border-border/30 flex-col z-50">
       <div className="h-16 flex items-center gap-3 px-6 border-b border-border/20">
-        <div className="size-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center relative">
+        <div className="size-8 rounded-lg bg-linear-to-br from-primary to-accent flex items-center justify-center relative">
           <BrainCircuit className="size-4 text-primary-foreground relative z-10" />
-          <div className="absolute inset-0 rounded-lg bg-primary blur-md opacity-40 -z-0" />
+          <div className="absolute inset-0 rounded-lg bg-primary blur-md opacity-40 z-0" />
         </div>
         <div className="flex flex-col leading-none">
           <span className="font-bold text-base tracking-tight">Recall AI</span>
@@ -148,7 +144,7 @@ export function Sidebar({
       </nav>
 
       <div className="px-3 pb-3">
-        <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary/20 via-primary/5 to-accent/10 border border-primary/20 p-4">
+        <div className="relative overflow-hidden rounded-xl bg-linear-to-br from-primary/20 via-primary/5 to-accent/10 border border-primary/20 p-4">
           <div className="absolute -top-6 -right-6 size-20 rounded-full bg-primary/20 blur-xl" />
           <div className="relative">
             <div className="flex items-center gap-1.5 text-[10px] font-mono font-semibold text-primary uppercase tracking-wider mb-1">
@@ -176,7 +172,7 @@ export function Sidebar({
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-mono text-muted-foreground">+1 today</span>
-            <ThemeToggle className="!size-7" />
+            <ThemeToggle className="size-7!" />
           </div>
         </div>
         <ProfileMenu isActive={isActive} displayName={displayName} />
@@ -223,7 +219,7 @@ function ProfileMenu({
           open ? "bg-surface-raised" : "hover:bg-surface-raised/60"
         }`}
       >
-        <div className="size-8 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-xs font-bold text-primary-foreground shrink-0">
+        <div className="size-8 rounded-full bg-linear-to-br from-primary to-accent flex items-center justify-center text-xs font-bold text-primary-foreground shrink-0">
           {initials || "?"}
         </div>
         <div className="flex flex-col min-w-0 items-start flex-1">

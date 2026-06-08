@@ -119,20 +119,14 @@ export function TopicsView() {
     queryKey: ["topics"],
 
     queryFn: async () => {
-
-      const r = await fetch("/api/me/topics");
-
-      if (!r.ok) {
-
-        const d = await r.json().catch(() => ({}));
-
-        throw new Error((d as { error?: string }).error ?? `Failed to load (${r.status})`);
-
+      try {
+        const r = await fetch("/api/me/topics");
+        if (!r.ok) return [] as TopicRow[];
+        const d = (await r.json().catch(() => ({}))) as { topics?: TopicRow[] };
+        return (d.topics ?? []) as TopicRow[];
+      } catch {
+        return [] as TopicRow[];
       }
-
-      const d = await r.json();
-
-      return (d.topics ?? []) as TopicRow[];
 
     },
 

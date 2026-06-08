@@ -24,7 +24,7 @@ import {
   Award,
   AlertCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { MobileNav } from "@/components/layout/MobileNav";
@@ -74,19 +74,20 @@ export function TopicDetailView() {
   const [tab, setTab] = useState<"roadmap" | "cards" | "insights">("roadmap");
   const timerRef = useRef<StudyTimerHandle>(null);
   const [timerRunning, setTimerRunning] = useState(false);
-  const [roadmap, setRoadmap] = useState<Milestone[]>([]);
+  const [roadmap, setRoadmap] = useState<Milestone[] | null>(null);
   const [roadmapSaving, setRoadmapSaving] = useState(false);
 
   const topicQuery = useQuery({
     queryKey: ["topic", topicId],
     queryFn: async () => {
-      const r = await fetch(`/api/me/topics/${topicId}`);
-      if (r.status === 404) return { notFound: true as const };
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error((d as { error?: string }).error ?? "Failed to load topic");
+      try {
+        const r = await fetch(`/api/me/topics/${topicId}`);
+        if (r.status === 404) return { notFound: true as const };
+        if (!r.ok) return { notFound: true as const };
+        return { notFound: false as const, data: (await r.json()) as TopicPayload };
+      } catch {
+        return { notFound: true as const };
       }
-      return { notFound: false as const, data: (await r.json()) as TopicPayload };
     },
   });
 
@@ -107,12 +108,6 @@ export function TopicDetailView() {
   const loading = topicQuery.isLoading;
   const notFound = topicQuery.data?.notFound === true;
   const fetchError = topicQuery.error?.message ?? null;
-
-  useEffect(() => {
-    if (topicData?.roadmap) {
-      setRoadmap(topicData.roadmap);
-    }
-  }, [topicData?.roadmap]);
 
   const refetchTopic = () => {
     void topicQuery.refetch();
@@ -138,15 +133,15 @@ export function TopicDetailView() {
     }
   };
 
-  const displayRoadmap = roadmap.length > 0 ? roadmap : (topicData?.roadmap ?? []);
+  const displayRoadmapItems = roadmap ?? topicData?.roadmap ?? [];
 
   const avgRetention = cards.length
     ? Math.round(cards.reduce((s, c) => s + c.retention, 0) / cards.length)
     : 0;
   const weakCards = cards.filter((c) => c.retention < 60);
   const streakDays = dashboardQuery.data?.streakDays ?? 0;
-  const totalTasks = displayRoadmap.reduce((s, m) => s + (m.tasks?.length ?? 0), 0);
-  const doneTasks = displayRoadmap.reduce((s, m) => s + (m.tasks?.filter((t) => t.done).length ?? 0), 0);
+  const totalTasks = displayRoadmapItems.reduce((s, m) => s + (m.tasks?.length ?? 0), 0);
+  const doneTasks = displayRoadmapItems.reduce((s, m) => s + (m.tasks?.filter((t) => t.done).length ?? 0), 0);
   const overall = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : avgRetention;
   const performance = cards.slice(0, 12).map((c) => c.retention);
 
@@ -322,7 +317,7 @@ export function TopicDetailView() {
           {tab === "roadmap" && (
             <RoadmapView
               topicSlug={topicId}
-              roadmap={displayRoadmap}
+              roadmap={displayRoadmapItems}
               saving={roadmapSaving}
               onSaveRoadmap={saveRoadmap}
               onRegenerated={refetchTopic}
@@ -846,7 +841,7 @@ function CardsView({
                     )}
                   </div>
                   <div className="flex items-center gap-3 justify-between sm:justify-end">
-                    <div className="text-right min-w-[60px]">
+                    <div className="text-right min-w-15">
                       <p
                         className={`text-sm font-mono font-bold ${
                           card.retention >= 80 ? "text-good" : card.retention >= 60 ? "text-hard" : "text-again"
@@ -987,7 +982,7 @@ function CardsView({
       <aside className="space-y-4">
         <section className="bg-surface rounded-2xl border border-border/20 p-5">
           <h3 className="text-sm font-semibold mb-4">Accuracy trend</h3>
-          <div className="flex items-end gap-[3px] h-28">
+          <div className="flex items-end gap-0.75 h-28">
             {performance.map((p, i) => (
               <div key={i} className="flex-1 flex items-end">
                 <div className="w-full bg-primary/60 rounded-t-sm" style={{ height: `${p}%` }} />
@@ -1050,19 +1045,18 @@ function InsightsView({
   onArchive: () => void;
   onDelete: () => void;
 }) {
-  const [data, setData] = useState<TopicInsightsPayload | null>(null);
+  const [data, setData] = useState<TopicInsightsPayload | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = localStorage.getItem(INSIGHTS_CACHE_KEY(topicSlug));
+      return raw ? (JSON.parse(raw) as TopicInsightsPayload) : null;
+    } catch {
+      return null;
+    }
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mgmtError, setMgmtError] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(INSIGHTS_CACHE_KEY(topicSlug));
-      if (raw) setData(JSON.parse(raw) as TopicInsightsPayload);
-    } catch {
-      setData(null);
-    }
-  }, [topicSlug]);
 
   const regenerate = async () => {
     setLoading(true);
@@ -1175,7 +1169,7 @@ function InsightsView({
           <div className="text-4xl font-bold text-good">{mastery}%</div>
           <p className="text-xs text-muted-foreground mt-1">Average card retention</p>
           <div className="mt-4 h-2 bg-surface-raised rounded-full overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-primary to-good" style={{ width: `${mastery}%` }} />
+            <div className="h-full bg-linear-to-r from-primary to-good" style={{ width: `${mastery}%` }} />
           </div>
           {dueCount > 0 && (
             <p className="text-xs text-hard mt-3">{dueCount} cards due for review</p>
@@ -1240,15 +1234,6 @@ function Insight({
         {title}
       </div>
       <p className="text-sm text-foreground/90 mt-1.5">{body}</p>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
     </div>
   );
 }
