@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAnonKey, getSupabaseUrl, isSupabaseConfigured } from "./env";
+import { clearSupabaseAuthCookies, isInvalidRefreshTokenError } from "./clear-auth-cookies";
 
 const PROTECTED_PREFIXES = [
   "/dashboard",
@@ -35,6 +36,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   let supabaseResponse = NextResponse.next({ request });
+  const cookieNames = request.cookies.getAll().map((c) => c.name);
 
   const supabase = createServerClient(getSupabaseUrl(), getSupabaseAnonKey(), {
     cookies: {
@@ -51,9 +53,21 @@ export async function updateSession(request: NextRequest) {
     },
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user = null;
+  try {
+    const { data, error } = await supabase.auth.getUser();
+    if (error && isInvalidRefreshTokenError(error)) {
+      clearSupabaseAuthCookies(supabaseResponse, cookieNames);
+    } else {
+      user = data.user;
+    }
+  } catch (error) {
+    if (isInvalidRefreshTokenError(error)) {
+      clearSupabaseAuthCookies(supabaseResponse, cookieNames);
+    } else {
+      throw error;
+    }
+  }
 
   const pathname = request.nextUrl.pathname;
 

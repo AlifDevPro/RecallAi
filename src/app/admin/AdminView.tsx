@@ -41,6 +41,7 @@ type Tab = (typeof TABS)[number];
 
 type Role = "owner" | "admin" | "moderator" | "member";
 type UserRow = {
+  id: string;
   name: string;
   email: string;
   plan: "Free" | "Pro" | "Team";
@@ -52,17 +53,6 @@ type UserRow = {
   mfa: boolean;
   lastSeen: string;
 };
-
-const users: UserRow[] = [
-  { name: "Alex Chen", email: "alex@acme.dev", plan: "Pro", role: "owner", joined: "Mar 12", streak: 42, status: "active", verified: true, mfa: true, lastSeen: "2m ago" },
-  { name: "Maya Rodriguez", email: "maya@med.school", plan: "Pro", role: "admin", joined: "Mar 09", streak: 28, status: "active", verified: true, mfa: true, lastSeen: "12m ago" },
-  { name: "Jin Park", email: "jin@gmail.com", plan: "Free", role: "member", joined: "Mar 08", streak: 14, status: "active", verified: true, mfa: false, lastSeen: "1h ago" },
-  { name: "Sara El-Amin", email: "sara@biotech.co", plan: "Team", role: "moderator", joined: "Mar 02", streak: 7, status: "trial", verified: false, mfa: false, lastSeen: "3h ago" },
-  { name: "Diego Hart", email: "diego@hart.io", plan: "Free", role: "member", joined: "Feb 28", streak: 0, status: "churned", verified: false, mfa: false, lastSeen: "9d ago" },
-  { name: "Priya Nair", email: "priya@nair.dev", plan: "Pro", role: "member", joined: "Feb 24", streak: 61, status: "active", verified: true, mfa: true, lastSeen: "23m ago" },
-  { name: "Kenji Watanabe", email: "kenji@osaka.jp", plan: "Pro", role: "moderator", joined: "Feb 20", streak: 19, status: "active", verified: true, mfa: false, lastSeen: "5h ago" },
-  { name: "Nora Ibrahim", email: "nora@ibrahim.me", plan: "Free", role: "member", joined: "Feb 18", streak: 3, status: "suspended", verified: false, mfa: false, lastSeen: "2d ago" },
-];
 
 const aiCalls = [
   { model: "gemini-3-flash", category: "Card generation", calls: 14823, tokens: "9.2M", cost: 142.7 },
@@ -317,7 +307,8 @@ function UsersPanel() {
       .then((r) => r.json())
       .then((d) => {
         setUserRows(
-          (d.users ?? []).map((u: { name: string; email: string; plan: string; role: string; joined: string; verified: boolean }) => ({
+          (d.users ?? []).map((u: { id: string; name: string; email: string; plan: string; role: string; joined: string; verified: boolean }) => ({
+            id: u.id,
             name: u.name,
             email: u.email,
             plan: u.plan as UserRow["plan"],
@@ -399,10 +390,28 @@ function UsersPanel() {
               ]}
             />
             <div className="ml-auto flex gap-2 text-xs">
-              <button className="px-3 py-1.5 rounded-lg bg-surface-raised border border-border/30 hover:border-border/60">
+              <button
+                type="button"
+                onClick={() => {
+                  const csv = [
+                    "id,name,email,plan,role,joined",
+                    ...userRows.map((u) =>
+                      [u.id, u.name, u.email, u.plan, u.role, u.joined].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")
+                    ),
+                  ].join("\n");
+                  const blob = new Blob([csv], { type: "text/csv" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "users.csv";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-surface-raised border border-border/30 hover:border-border/60"
+              >
                 Export CSV
               </button>
-              <button className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 font-medium inline-flex items-center gap-1.5">
+              <button type="button" disabled title="Invite flow not configured" className="px-3 py-1.5 rounded-lg bg-primary/50 text-primary-foreground font-medium inline-flex items-center gap-1.5 cursor-not-allowed">
                 <Send className="size-3.5" /> Invite admin
               </button>
             </div>
@@ -428,7 +437,7 @@ function UsersPanel() {
                 const RoleIcon = ROLE_META[u.role].icon;
                 return (
                   <tr
-                    key={u.email}
+                    key={u.id}
                     className="border-b border-border/10 hover:bg-surface-raised/40 cursor-pointer"
                     onClick={() => setSelected(u)}
                   >
@@ -520,7 +529,34 @@ function UsersPanel() {
         </div>
       </div>
 
-      {selected && <UserDrawer user={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <UserDrawer
+          user={selected}
+          onClose={() => setSelected(null)}
+          onRoleSaved={() => {
+            fetch("/api/admin/users")
+              .then((r) => r.json())
+              .then((d) => {
+                setUserRows(
+                  (d.users ?? []).map((u: { id: string; name: string; email: string; plan: string; role: string; joined: string; verified: boolean }) => ({
+                    id: u.id,
+                    name: u.name,
+                    email: u.email,
+                    plan: u.plan as UserRow["plan"],
+                    role: (u.role === "admin" ? "admin" : "member") as Role,
+                    joined: u.joined,
+                    streak: 0,
+                    status: "active" as const,
+                    verified: u.verified,
+                    mfa: false,
+                    lastSeen: "—",
+                  }))
+                );
+              })
+              .catch(() => {});
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -567,9 +603,33 @@ function SegFilter({
   );
 }
 
-function UserDrawer({ user, onClose }: { user: UserRow; onClose: () => void }) {
+function UserDrawer({ user, onClose, onRoleSaved }: { user: UserRow; onClose: () => void; onRoleSaved?: () => void }) {
   const [role, setRole] = useState<Role>(user.role);
+  const [savingRole, setSavingRole] = useState(false);
+  const [roleMessage, setRoleMessage] = useState<string | null>(null);
   const RoleIcon = ROLE_META[role].icon;
+
+  const saveRole = async () => {
+    const apiRole = role === "admin" ? "admin" : "member";
+    setSavingRole(true);
+    setRoleMessage(null);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: user.id, role: apiRole }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to update role");
+      setRoleMessage("Role saved.");
+      onRoleSaved?.();
+    } catch (e) {
+      setRoleMessage(e instanceof Error ? e.message : "Failed to update role");
+    } finally {
+      setSavingRole(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onClose} />
@@ -671,6 +731,19 @@ function UserDrawer({ user, onClose }: { user: UserRow; onClose: () => void }) {
                 Owners can transfer ownership. Admins manage users, content and billing.
                 Moderators can review reports only. Members have no admin surface.
               </p>
+              {roleMessage && (
+                <p className={`text-xs mt-2 ${roleMessage.includes("saved") ? "text-good" : "text-destructive"}`}>
+                  {roleMessage}
+                </p>
+              )}
+              <button
+                type="button"
+                disabled={savingRole}
+                onClick={() => void saveRole()}
+                className="mt-3 w-full h-9 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50"
+              >
+                {savingRole ? "Saving role…" : "Save role"}
+              </button>
             </div>
           </section>
 

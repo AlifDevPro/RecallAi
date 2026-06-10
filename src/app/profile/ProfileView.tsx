@@ -55,7 +55,7 @@ export function ProfileView() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Sidebar streakDays={stats?.streak} />
-      <MobileNav />
+      <MobileNav streakDays={stats?.streak} />
       <div className="lg:ml-64 pt-14 lg:pt-0">
         <div className="relative h-44 sm:h-52 bg-gradient-to-br from-primary/30 via-primary/10 to-accent/20 overflow-hidden">
           <div className="absolute -top-10 -right-10 size-48 rounded-full bg-primary/30 blur-3xl" />

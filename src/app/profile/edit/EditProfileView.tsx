@@ -14,8 +14,16 @@ export function EditProfileView() {
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [bio, setBio] = useState("");
+  const [location, setLocation] = useState("");
+  const [primaryGoal, setPrimaryGoal] = useState("");
+  const [website, setWebsite] = useState("");
+  const [github, setGithub] = useState("");
+  const [linkedin, setLinkedin] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [bioLoading, setBioLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
   const [initials, setInitials] = useState("?");
 
   useEffect(() => {
@@ -23,24 +31,50 @@ export function EditProfileView() {
       .then((r) => r.json())
       .then((d) => {
         if (d.profile) {
-          setDisplayName(d.profile.displayName ?? "");
-          setEmail(d.profile.email ?? "");
-          setBio(d.profile.bio ?? "");
-          setInitials(d.profile.initials ?? "?");
+          const p = d.profile;
+          setDisplayName(p.displayName ?? "");
+          setEmail(p.email ?? "");
+          setBio(p.bio ?? "");
+          setInitials(p.initials ?? "?");
+          setLevel(p.skillLevel ?? "advanced");
+          setTz(p.timezone ?? "America/Los_Angeles");
+          setLocation(p.location ?? "");
+          setPrimaryGoal(p.primaryGoal ?? "");
+          setWebsite(p.website ?? "");
+          setGithub(p.github ?? "");
+          setLinkedin(p.linkedin ?? "");
+          setAvatarUrl(p.avatarUrl ?? null);
         }
       })
-      .catch(() => {});
+      .catch(() => setError("Failed to load profile"));
   }, []);
 
   const saveProfile = async () => {
     setSaving(true);
+    setError(null);
+    setSuccess(false);
     try {
       const res = await fetch("/api/me/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ displayName, bio }),
+        body: JSON.stringify({
+          displayName,
+          bio,
+          avatarUrl,
+          skillLevel: level,
+          timezone: tz,
+          location,
+          primaryGoal,
+          website,
+          github,
+          linkedin,
+        }),
       });
-      if (!res.ok) throw new Error("Save failed");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Save failed");
+      setSuccess(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
     }
@@ -56,6 +90,8 @@ export function EditProfileView() {
       setBioLoading(false);
     }
   };
+
+  const removeAvatar = () => setAvatarUrl(null);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -76,28 +112,41 @@ export function EditProfileView() {
             </button>
           </div>
 
-          {/* Avatar */}
+          {error && (
+            <p className="mb-4 text-sm text-again bg-again/10 border border-again/30 rounded-lg px-3 py-2">{error}</p>
+          )}
+          {success && (
+            <p className="mb-4 text-sm text-good bg-good/10 border border-good/30 rounded-lg px-3 py-2">Profile saved.</p>
+          )}
+
           <section className="p-5 rounded-2xl bg-surface border border-border/40 mb-5">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-4">Avatar</h2>
             <div className="flex items-center gap-5">
               <div className="relative">
-                <div className="size-20 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center text-2xl font-bold text-primary-foreground">{initials}</div>
-                <button className="absolute -bottom-1 -right-1 size-8 rounded-lg bg-foreground text-background flex items-center justify-center shadow-lg">
+                {avatarUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={avatarUrl} alt="" className="size-20 rounded-2xl object-cover" />
+                ) : (
+                  <div className="size-20 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center text-2xl font-bold text-primary-foreground">{initials}</div>
+                )}
+                <button type="button" className="absolute -bottom-1 -right-1 size-8 rounded-lg bg-foreground text-background flex items-center justify-center shadow-lg" aria-label="Change avatar">
                   <Camera className="size-4" />
                 </button>
               </div>
               <div className="flex-1">
                 <div className="flex gap-2 flex-wrap">
-                  <button className="h-9 px-3.5 rounded-lg bg-surface-raised hover:bg-surface-raised/80 text-sm font-medium text-foreground">Upload photo</button>
-                  <AIButton size="sm">Generate avatar</AIButton>
-                  <button className="h-9 px-3.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground">Remove</button>
+                  <button type="button" disabled className="h-9 px-3.5 rounded-lg bg-surface-raised text-sm font-medium text-muted-foreground cursor-not-allowed" title="Storage upload coming soon">
+                    Upload photo
+                  </button>
+                  <button type="button" onClick={removeAvatar} className="h-9 px-3.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground">
+                    Remove
+                  </button>
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-2">PNG or JPG up to 2MB. Square images look best.</p>
+                <p className="text-[11px] text-muted-foreground mt-2">Avatar URL can be set via API; file upload uses question-uploads bucket in a future release.</p>
               </div>
             </div>
           </section>
 
-          {/* Identity */}
           <section className="p-5 rounded-2xl bg-surface border border-border/40 mb-5">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-4">Identity</h2>
             <div className="grid sm:grid-cols-2 gap-4">
@@ -122,7 +171,6 @@ export function EditProfileView() {
             </div>
           </section>
 
-          {/* Learning */}
           <section className="p-5 rounded-2xl bg-surface border border-border/40 mb-5">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-4">Learning preferences</h2>
             <div className="grid sm:grid-cols-2 gap-4">
@@ -148,18 +196,17 @@ export function EditProfileView() {
                   { value: "Asia/Tokyo", label: "Tokyo", description: "GMT+9" },
                 ]}
               />
-              <Input label="Location" icon={<MapPin className="size-4" />} defaultValue="San Francisco, CA" />
-              <Input label="Primary goal" icon={<Sparkles className="size-4" />} defaultValue="USMLE Step 1 — 240+" />
+              <Input label="Location" icon={<MapPin className="size-4" />} value={location} onChange={(e) => setLocation(e.target.value)} />
+              <Input label="Primary goal" icon={<Sparkles className="size-4" />} value={primaryGoal} onChange={(e) => setPrimaryGoal(e.target.value)} />
             </div>
           </section>
 
-          {/* Links */}
           <section className="p-5 rounded-2xl bg-surface border border-border/40 mb-5">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-4">Social links</h2>
             <div className="space-y-3">
-              <Input label="Website" icon={<Globe className="size-4" />} placeholder="https://yoursite.com" />
-              <Input label="GitHub" icon={<Github className="size-4" />} placeholder="username" />
-              <Input label="LinkedIn" icon={<Linkedin className="size-4" />} placeholder="username" />
+              <Input label="Website" icon={<Globe className="size-4" />} placeholder="https://yoursite.com" value={website} onChange={(e) => setWebsite(e.target.value)} />
+              <Input label="GitHub" icon={<Github className="size-4" />} placeholder="username" value={github} onChange={(e) => setGithub(e.target.value)} />
+              <Input label="LinkedIn" icon={<Linkedin className="size-4" />} placeholder="username" value={linkedin} onChange={(e) => setLinkedin(e.target.value)} />
             </div>
           </section>
 

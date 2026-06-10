@@ -52,10 +52,11 @@ export function GoalsClient() {
             </Link>
           </div>
           <div className="space-y-4">
-            {goals.map((g) => (
-              <div
+                {goals.map((g) => (
+              <Link
                 key={g.id}
-                className="p-5 rounded-2xl bg-surface border border-border/20 flex items-center gap-4"
+                href={g.id === "primary" ? "/onboarding" : `/topics/${g.id}`}
+                className="p-5 rounded-2xl bg-surface border border-border/20 flex items-center gap-4 hover:border-primary/30 transition-colors"
               >
                 <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center">
                   <Target className="size-5 text-primary" />
@@ -69,7 +70,7 @@ export function GoalsClient() {
                 </div>
                 <span className="text-sm font-mono text-primary">{g.progress}%</span>
                 <ChevronRight className="size-4 text-muted-foreground" />
-              </div>
+              </Link>
             ))}
             {goals.length === 0 && (
               <div className="text-center py-12">

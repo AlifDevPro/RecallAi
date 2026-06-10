@@ -9,7 +9,8 @@
     "lint": "eslint",
     "embed-papers": "npx tsx scripts/embed-public-papers.ts",
     "seed-papers": "npx tsx scripts/seed-papers-db.ts",
-    "seed-contributors": "npx tsx scripts/seed-contributors.ts"
+    "seed-contributors": "npx tsx scripts/seed-contributors.ts",
+    "test": "npx tsx --test src/lib/tutor/**/*.test.ts"
   },
   "dependencies": {
     "@ai-sdk/groq": "^3.0.39",

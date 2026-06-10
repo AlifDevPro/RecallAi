@@ -1,20 +1,15 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { nextScheduling, type ReviewRating } from "@/lib/srs/update-scheduling";
 import { RATING_INTERVAL_DAYS } from "@/lib/srs/format-interval";
+import { requireUser } from "@/lib/supabase/route-auth";
 import { ingestDocument } from "@/lib/vectors/ingest";
 
 const VALID_RATINGS: ReviewRating[] = ["again", "hard", "good", "easy"];
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   const body = await request.json();
   const cardId = body.cardId as string;

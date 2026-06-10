@@ -42,7 +42,7 @@ export const onboardingSchema = z.object({
   goal: z.string().min(3),
   goalTemplate: z.string().optional().default(""),
   level: z.enum(["beginner", "intermediate", "advanced"]),
-  minutesPerDay: z.number().int().min(5).max(180),
+  hoursPerDay: z.number().min(0.5).max(6).multipleOf(0.5),
   days: z.array(z.number().int().min(0).max(6)),
   deadline: z.string().nullable().optional(),
   skip: z.boolean().optional(),

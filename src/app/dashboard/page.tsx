@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getDashboard } from "@/lib/dashboard/get-dashboard";
+import { getUserSafe } from "@/lib/supabase/get-user-safe";
 import { DashboardView } from "./DashboardView";
 
 export const metadata: Metadata = {
@@ -11,15 +11,11 @@ export const metadata: Metadata = {
 
 export default async function Page() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user } = await getUserSafe(supabase);
 
   if (!user) {
     redirect("/login");
   }
 
-  const initialData = await getDashboard(supabase, user.id);
-
-  return <DashboardView initialData={initialData} />;
+  return <DashboardView />;
 }

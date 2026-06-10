@@ -1,19 +1,14 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/route-auth";
 
 export async function PATCH(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   const { error } = await supabase
     .from("notifications")

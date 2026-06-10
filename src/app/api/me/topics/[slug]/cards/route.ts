@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireUser } from "@/lib/supabase/route-auth";
 import { ingestDocument } from "@/lib/vectors/ingest";
 import { validateCardFields } from "@/lib/topics/validate-topic";
 
 async function getTopicId(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: SupabaseClient,
   userId: string,
   slug: string
 ) {
@@ -22,14 +23,9 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   const topicId = await getTopicId(supabase, user.id, slug);
   if (!topicId) {

@@ -36,10 +36,10 @@ const GOAL_TEMPLATES = [
 ];
 
 const TIME_OPTIONS = [
-  { mins: 10, label: "Light", desc: "Quick daily touch-ups" },
-  { mins: 20, label: "Balanced", desc: "Best for most learners" },
-  { mins: 40, label: "Intensive", desc: "Fast progress" },
-  { mins: 60, label: "Deep work", desc: "Exam-prep mode" },
+  { hours: 0.5, label: "Light", desc: "Quick daily touch-ups" },
+  { hours: 1, label: "Balanced", desc: "Best for most learners" },
+  { hours: 1.5, label: "Focused", desc: "Steady exam prep" },
+  { hours: 2, label: "Deep work", desc: "Intensive mastery" },
 ];
 
 const DAYS = ["S", "M", "T", "W", "T", "F", "S"];
@@ -77,7 +77,7 @@ export function OnboardingView() {
   const [goal, setGoal] = useState("");
   const [deadline, setDeadline] = useState("");
   const [level, setLevel] = useState("Intermediate");
-  const [minutes, setMinutes] = useState(20);
+  const [hours, setHours] = useState(1);
   const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -98,13 +98,13 @@ export function OnboardingView() {
     if (step === 0) return name.trim().length > 0;
     if (step === 1) return goal.trim().length > 2;
     if (step === 2) return !!level;
-    if (step === 3) return minutes > 0;
+    if (step === 3) return hours > 0;
     if (step === 4) return days.length > 0;
     return true;
-  }, [step, name, goal, level, minutes, days]);
+  }, [step, name, goal, level, hours, days]);
 
 
-  const totalCards = Math.round((minutes / 5) * days.length * 4);
+  const totalCards = Math.round((hours * 60 / 5) * days.length * 4);
   const weeksToGoal = deadline
     ? Math.max(1, Math.ceil((new Date(deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 7)))
     : 8;
@@ -117,7 +117,7 @@ export function OnboardingView() {
       goal: skip ? "Get started" : goal,
       goalTemplate: goalTemplate ?? "",
       level: skip ? "beginner" : levelToApi(level),
-      minutesPerDay: skip ? 20 : minutes,
+      hoursPerDay: skip ? 0.5 : hours,
       days: skip ? [1, 3, 5] : days,
       deadline: skip ? null : deadline || null,
       skip,
@@ -134,7 +134,7 @@ export function OnboardingView() {
         throw new Error(data.error ?? "Failed to save your plan");
       }
       setTimeout(() => {
-        router.push("/dashboard");
+        router.push("/schedule?welcome=1");
         router.refresh();
       }, 2600);
     } catch (e) {
@@ -156,7 +156,7 @@ export function OnboardingView() {
   }
 
   if (generating) {
-    return <GeneratingScreen name={name} goal={goal} minutes={minutes} days={days.length} />;
+    return <GeneratingScreen name={name} goal={goal} hours={hours} days={days.length} />;
   }
 
   const Meta = STEP_META[step];
@@ -355,16 +355,16 @@ export function OnboardingView() {
               <StepShell
                 eyebrow="Time availability"
                 icon={Clock}
-                title="How many minutes per day?"
+                title="How many hours per day for study?"
                 desc="Pick a realistic number. Consistency beats intensity every time."
               >
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
                   {TIME_OPTIONS.map((t) => {
-                    const active = minutes === t.mins;
+                    const active = hours === t.hours;
                     return (
                       <button
-                        key={t.mins}
-                        onClick={() => setMinutes(t.mins)}
+                        key={t.hours}
+                        onClick={() => setHours(t.hours)}
                         className={`p-4 rounded-xl border transition-all text-left ${
                           active
                             ? "bg-primary/10 border-primary/50"
@@ -372,8 +372,8 @@ export function OnboardingView() {
                         }`}
                       >
                         <div className={`text-2xl font-bold font-mono ${active ? "text-primary" : ""}`}>
-                          {t.mins}
-                          <span className="text-xs font-normal text-muted-foreground ml-1">min</span>
+                          {t.hours}
+                          <span className="text-xs font-normal text-muted-foreground ml-1">h</span>
                         </div>
                         <div className="text-xs font-medium mt-2">{t.label}</div>
                         <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{t.desc}</div>
@@ -382,23 +382,22 @@ export function OnboardingView() {
                   })}
                 </div>
                 <label className="block text-sm font-medium mb-3 text-muted-foreground">
-                  Custom: <span className="font-mono text-foreground">{minutes} min</span>
+                  Custom: <span className="font-mono text-foreground">{hours} h</span>
                 </label>
                 <input
                   type="range"
-                  min={5}
-                  max={120}
-                  step={5}
-                  value={minutes}
-                  onChange={(e) => setMinutes(Number(e.target.value))}
+                  min={0.5}
+                  max={6}
+                  step={0.5}
+                  value={hours}
+                  onChange={(e) => setHours(Number(e.target.value))}
                   className="w-full accent-primary"
                 />
                 <div className="flex justify-between text-[10px] text-muted-foreground mt-1 font-mono">
-                  <span>5</span>
-                  <span>30</span>
-                  <span>60</span>
-                  <span>90</span>
-                  <span>120</span>
+                  <span>0.5h</span>
+                  <span>2h</span>
+                  <span>4h</span>
+                  <span>6h</span>
                 </div>
               </StepShell>
             )}
@@ -447,7 +446,7 @@ export function OnboardingView() {
                 <div className="grid sm:grid-cols-2 gap-3">
                   <PlanStat label="Account" value={email || "—"} />
                   <PlanStat label="Name" value={name || "—"} />
-                  <PlanStat label="Daily study time" value={`${minutes} min`} mono />
+                  <PlanStat label="Daily study time" value={`${hours} h`} mono />
                   <PlanStat label="Days per week" value={`${days.length}/7`} mono />
                   <PlanStat label="Starting level" value={level} />
                   <PlanStat label="Projected cards" value={`~${totalCards}`} mono accent />
@@ -587,12 +586,12 @@ function PlanStat({
 function GeneratingScreen({
   name,
   goal,
-  minutes,
+  hours,
   days,
 }: {
   name: string;
   goal: string;
-  minutes: number;
+  hours: number;
   days: number;
 }) {
   const tasks = [
@@ -654,7 +653,7 @@ function GeneratingScreen({
           })}
         </div>
         <div className="mt-8 text-[11px] font-mono text-muted-foreground">
-          {minutes} min/day · {days} days/week
+          {hours} h/day · {days} days/week
         </div>
       </div>
     </div>

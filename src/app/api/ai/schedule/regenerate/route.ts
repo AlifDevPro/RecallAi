@@ -1,66 +1,146 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { z } from "zod";
+import { logRouteError } from "@/lib/api/log-route-error";
+import { SCHEDULE_FULL_DAY_SYSTEM } from "@/lib/ai/prompts";
 import { generateWithFailover } from "@/lib/ai/router";
-import { SCHEDULE_SYSTEM } from "@/lib/ai/prompts";
-import { searchContent, formatRagContext } from "@/lib/vectors/search";
-import { aggregateTopicStats } from "@/lib/topics/aggregate-topic-stats";
+import { buildScheduleAiContext } from "@/lib/schedule/build-ai-context";
 import { parseAiScheduleBlocks } from "@/lib/schedule/map-ai-blocks";
+import { validateScheduleBlocks } from "@/lib/schedule/validate-blocks";
+import { requireUser } from "@/lib/supabase/route-auth";
+
+const regenerateBodySchema = z.object({
+  day: z.number().int().min(0).max(6).optional(),
+  scope: z.enum(["day", "week"]).default("day"),
+  mode: z.enum(["narrative", "profile"]).default("profile"),
+  narrative: z.string().max(2000).optional(),
+  saveNarrative: z.boolean().optional(),
+});
+
+function validateParsedBlocks(
+  blocks: ReturnType<typeof parseAiScheduleBlocks>,
+  scope: "day" | "week",
+  day?: number
+): { ok: true } | { ok: false; error: string } {
+  const daysToCheck =
+    scope === "week" ? [0, 1, 2, 3, 4, 5, 6] : day != null ? [day] : [];
+
+  for (const d of daysToCheck) {
+    const dayBlocks = blocks.filter((b) => b.day === d);
+    if (dayBlocks.length === 0) {
+      if (scope === "day") {
+        return { ok: false, error: `No blocks generated for day ${d}` };
+      }
+      continue;
+    }
+    const result = validateScheduleBlocks(
+      d,
+      dayBlocks.map((b) => ({
+        start: b.start,
+        end: b.end,
+        title: b.title,
+        kind: b.kind,
+        detail: b.detail,
+        ai: b.ai,
+      }))
+    );
+    if (!result.ok) {
+      return { ok: false, error: `Day ${d}: ${result.error}` };
+    }
+  }
+
+  if (blocks.length === 0) {
+    return { ok: false, error: "AI returned no valid blocks" };
+  }
+
+  return { ok: true };
+}
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  let day: number | undefined;
+  let body: unknown = {};
   try {
-    const body = await request.json().catch(() => ({}));
-    if (body.day != null) day = Number(body.day);
+    body = await request.json();
   } catch {
-    /* optional body */
+    /* empty body ok */
+  }
+
+  const parsed = regenerateBodySchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.flatten().fieldErrors },
+      { status: 400 }
+    );
+  }
+
+  const { day, scope, mode, narrative, saveNarrative } = parsed.data;
+
+  if (scope === "day" && day == null) {
+    return NextResponse.json({ error: "day is required when scope is day" }, { status: 400 });
   }
 
   try {
-    const { data: plan } = await supabase
-      .from("study_plans")
-      .select("*")
-      .eq("user_id", user.id)
-      .single();
-
-    const topics = await aggregateTopicStats(supabase, user.id);
-    const dueSummary = topics
-      .filter((t) => t.due > 0)
-      .map((t) => `${t.name}: ${t.due} due, ${t.mastery}% mastery`)
-      .join("; ");
-
-    const rag = await searchContent("weak areas study focus review", { userId: user.id });
-    const planText = plan
-      ? `Goal: ${plan.goal}. Level: ${plan.level}. Minutes/day: ${plan.minutes_per_day}. Study days (0=Sun): ${(plan.study_days ?? []).join(",")}.`
-      : "Default balanced plan: 20 min/day, Mon–Fri.";
-
-    const dayHint =
-      day != null
-        ? `Generate blocks for day ${day} only (0=Sunday).`
-        : "Generate a full week (days 0–6).";
-
-    const { text } = await generateWithFailover(
-      `${planText}\nDue today by topic: ${dueSummary || "none"}.\n${dayHint}\n\nContext:\n${formatRagContext(rag)}\n\nReturn schedule JSON.`,
-      { system: SCHEDULE_SYSTEM, json: true, route: "schedule-regenerate", userId: user.id }
-    );
-
-    const parsed = JSON.parse(text);
-    const blocks = parseAiScheduleBlocks(parsed);
-
-    if (blocks.length === 0) {
-      return NextResponse.json({ error: "AI returned no valid blocks" }, { status: 500 });
+    if (saveNarrative && narrative != null) {
+      await auth.supabase
+        .from("study_plans")
+        .update({ schedule_narrative: narrative })
+        .eq("user_id", auth.user.id);
     }
 
-    return NextResponse.json({ schedule: { blocks } });
+    const context = await buildScheduleAiContext(auth.supabase, auth.user.id, {
+      mode,
+      scope,
+      day,
+      narrativeOverride: narrative,
+    });
+
+    const { text } = await generateWithFailover(
+      `${context}\n\nReturn schedule JSON with a "blocks" array.`,
+      {
+        system: SCHEDULE_FULL_DAY_SYSTEM,
+        json: true,
+        route: "schedule-regenerate",
+        userId: auth.user.id,
+      }
+    );
+
+    const raw = JSON.parse(text);
+    let blocks = parseAiScheduleBlocks(raw);
+
+    if (scope === "day" && day != null) {
+      blocks = blocks.filter((b) => b.day === day);
+    }
+
+    let validation = validateParsedBlocks(blocks, scope, day);
+    if (!validation.ok) {
+      const { text: retryText } = await generateWithFailover(
+        `${context}\n\nPrevious attempt failed validation: ${validation.error}. Fix overlaps and return valid schedule JSON.`,
+        {
+          system: SCHEDULE_FULL_DAY_SYSTEM,
+          json: true,
+          route: "schedule-regenerate-retry",
+          userId: auth.user.id,
+        }
+      );
+      const retryRaw = JSON.parse(retryText);
+      blocks = parseAiScheduleBlocks(retryRaw);
+      if (scope === "day" && day != null) {
+        blocks = blocks.filter((b) => b.day === day);
+      }
+      validation = validateParsedBlocks(blocks, scope, day);
+      if (!validation.ok) {
+        return NextResponse.json({ error: validation.error }, { status: 422 });
+      }
+    }
+
+    return NextResponse.json({
+      schedule: { blocks },
+      scope,
+      mode,
+    });
   } catch (e) {
+    logRouteError("POST /api/ai/schedule/regenerate", e, { userId: auth.user.id });
     const message = e instanceof Error ? e.message : "Schedule generation failed";
     return NextResponse.json({ error: message }, { status: 503 });
   }

@@ -55,7 +55,9 @@ export type ScheduleSummary = {
   insight: string;
   studyPlan: {
     minutesPerDay: number;
+    hoursPerDay: number;
     studyDays: number[];
+    scheduleNarrative: string;
   };
   tomorrowPreview: { label: string; tone: "primary" | "accent" | "good" }[];
 };

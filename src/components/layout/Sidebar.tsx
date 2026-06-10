@@ -85,6 +85,22 @@ export function Sidebar({
     refetchInterval: 60_000,
   });
 
+  const streakQuery = useQuery({
+    queryKey: ["dashboard", "summary", "streak"],
+    queryFn: async () => {
+      try {
+        const r = await fetch("/api/me/dashboard/summary");
+        if (!r.ok) return { streakDays: 0 };
+        const data = (await r.json().catch(() => ({}))) as { streakDays?: number };
+        return { streakDays: Number(data.streakDays ?? 0) };
+      } catch {
+        return { streakDays: 0 };
+      }
+    },
+    enabled: streakDays === undefined,
+    staleTime: 60_000,
+  });
+
   useEffect(() => {
     const loadNotifications = () => {
       fetch("/api/me/notifications")
@@ -107,6 +123,7 @@ export function Sidebar({
   }, []);
 
   const reviewCount = reviewDue ?? reviewStatsQuery.data?.totalDue ?? null;
+  const resolvedStreak = streakDays ?? streakQuery.data?.streakDays ?? 0;
 
   const learnItems = baseLearnItems.map((item) =>
     item.to === "/review" && reviewCount != null && reviewCount > 0
@@ -168,10 +185,11 @@ export function Sidebar({
         <div className="flex items-center justify-between mb-3 p-2 rounded-md bg-surface">
           <div className="flex items-center gap-2">
             <Flame className="size-4 text-hard" />
-            <span className="text-xs font-semibold">{streakDays ?? 14} day streak</span>
+            <span className="text-xs font-semibold">
+              {resolvedStreak} day streak
+            </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-mono text-muted-foreground">+1 today</span>
             <ThemeToggle className="size-7!" />
           </div>
         </div>

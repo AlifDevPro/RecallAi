@@ -25,6 +25,7 @@ import {
   Users,
 } from "lucide-react";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 const sections = [
@@ -72,9 +73,27 @@ const sections = [
   },
 ];
 
-export function MobileNav() {
+export function MobileNav({ streakDays }: { streakDays?: number } = {}) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
+
+  const streakQuery = useQuery({
+    queryKey: ["dashboard", "summary", "streak"],
+    queryFn: async () => {
+      try {
+        const r = await fetch("/api/me/dashboard/summary");
+        if (!r.ok) return { streakDays: 0 };
+        const data = (await r.json().catch(() => ({}))) as { streakDays?: number };
+        return { streakDays: Number(data.streakDays ?? 0) };
+      } catch {
+        return { streakDays: 0 };
+      }
+    },
+    enabled: streakDays === undefined,
+    staleTime: 60_000,
+  });
+
+  const resolvedStreak = streakDays ?? streakQuery.data?.streakDays ?? 0;
 
   return (
     <>
@@ -139,7 +158,7 @@ export function MobileNav() {
             ))}
             <div className="pt-4 border-t border-border/20 flex items-center gap-3">
               <Flame className="size-4 text-hard" />
-              <span className="text-sm font-medium">14 day streak</span>
+              <span className="text-sm font-medium">{resolvedStreak} day streak</span>
             </div>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/route-auth";
 import { ingestDocument } from "@/lib/vectors/ingest";
 import { validateCardFields } from "@/lib/topics/validate-topic";
 
@@ -8,14 +8,9 @@ export async function PATCH(
   { params }: { params: Promise<{ slug: string; cardId: string }> }
 ) {
   const { cardId, slug } = await params;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   const body = await request.json();
   const updates: Record<string, string> = {};
@@ -71,14 +66,9 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string; cardId: string }> }
 ) {
   const { cardId } = await params;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   const { error } = await supabase.from("cards").delete().eq("id", cardId).eq("user_id", user.id);
 

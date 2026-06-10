@@ -1,40 +1,32 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/route-auth";
+import {
+  buildActivityGrid,
+  computeReviewStreak,
+  localDateKey,
+  reviewEventsToDateKeys,
+} from "@/lib/review/streak";
 import { aggregateTopicStats } from "@/lib/topics/aggregate-topic-stats";
 
-function computeStreak(reviewDates: string[]): number {
-  if (!reviewDates.length) return 0;
-  const days = new Set(reviewDates.map((d) => d.slice(0, 10)));
-  let streak = 0;
-  const cursor = new Date();
-  for (;;) {
-    const key = cursor.toISOString().slice(0, 10);
-    if (days.has(key)) {
-      streak++;
-      cursor.setDate(cursor.getDate() - 1);
-    } else if (streak === 0) {
-      cursor.setDate(cursor.getDate() - 1);
-      if (days.has(cursor.toISOString().slice(0, 10))) {
-        streak++;
-        cursor.setDate(cursor.getDate() - 1);
-      } else break;
-    } else break;
-  }
-  return streak;
-}
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export async function GET() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   const since = new Date();
   since.setDate(since.getDate() - 30);
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("created_at")
+    .eq("id", user.id)
+    .single();
+
+  const accountCreatedAt = profile?.created_at ?? new Date().toISOString();
+  const accountStart = new Date(accountCreatedAt);
+  accountStart.setHours(0, 0, 0, 0);
 
   const { data: reviews } = await supabase
     .from("review_events")
@@ -43,69 +35,100 @@ export async function GET() {
     .gte("reviewed_at", since.toISOString())
     .order("reviewed_at", { ascending: false });
 
+  const filteredReviews = (reviews ?? []).filter((r) => r.reviewed_at >= accountCreatedAt);
+
   const byDay = new Map<string, number>();
-  for (const r of reviews ?? []) {
-    const day = r.reviewed_at.slice(0, 10);
+  for (const r of filteredReviews) {
+    const d = new Date(r.reviewed_at);
+    const day = Number.isNaN(d.getTime()) ? r.reviewed_at.slice(0, 10) : localDateKey(d);
     byDay.set(day, (byDay.get(day) ?? 0) + r.cards_reviewed);
   }
 
-  const daily = Array.from(byDay.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, cards]) => ({ date, cards }));
-
-  const totalCards = (reviews ?? []).reduce((s, r) => s + r.cards_reviewed, 0);
-  const streak = computeStreak((reviews ?? []).map((r) => r.reviewed_at));
+  const reviewDateSet = reviewEventsToDateKeys(filteredReviews);
+  const streak = computeReviewStreak(reviewDateSet);
+  const totalCards = filteredReviews.reduce((s, r) => s + r.cards_reviewed, 0);
 
   const topics = await aggregateTopicStats(supabase, user.id);
   const avgMastery =
     topics.length > 0
       ? Math.round(topics.reduce((s, t) => s + t.mastery, 0) / topics.length)
       : 0;
+  const totalDue = topics.reduce((s, t) => s + t.due, 0);
 
   const topicRows = topics.map((t) => ({
     name: t.name,
+    slug: t.slug,
     mastery: t.mastery,
     trend: t.trend,
+    due: t.due,
+    cards: t.cards,
   }));
 
-  const weaknesses = topics
-    .filter((t) => t.mastery < 70)
+  const weaknesses = [...topics]
     .sort((a, b) => a.mastery - b.mastery)
-    .slice(0, 6)
+    .slice(0, 8)
     .map((t) => ({
-      concept: t.name,
-      topic: t.name,
-      wrongRate: 100 - t.mastery,
+      name: t.name,
+      mastery: t.mastery,
+      due: t.due,
+      gap: Math.max(0, 100 - t.mastery),
+      trend: t.trend,
     }));
 
-  const sessions = (reviews ?? []).slice(0, 10).map((r) => ({
-    date: new Date(r.reviewed_at).toLocaleDateString(),
+  const { activityGrid } = buildActivityGrid(filteredReviews, 30, accountStart);
+  const activityDays: { date: string; weekday: string; count: number; level: string }[] = [];
+  const activityStart = new Date();
+  activityStart.setDate(activityStart.getDate() - 29);
+  activityStart.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(activityStart);
+    d.setDate(d.getDate() + i);
+    const key = localDateKey(d);
+    activityDays.push({
+      date: key,
+      weekday: WEEKDAYS[d.getDay()],
+      count: byDay.get(key) ?? 0,
+      level: activityGrid[i] ?? "empty",
+    });
+  }
+
+  const weeklyTrend = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    const key = localDateKey(d);
+    return {
+      day: `${WEEKDAYS[d.getDay()]} ${d.getDate()}`,
+      cards: byDay.get(key) ?? 0,
+    };
+  });
+
+  const sessions = filteredReviews.slice(0, 12).map((r) => ({
+    date: new Date(r.reviewed_at).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    }),
     type: "Review",
     cards: r.cards_reviewed,
-    accuracy: avgMastery,
     duration: `${Math.max(1, Math.round(r.cards_reviewed * 0.7))}m`,
   }));
 
-  const heatmapData = topics.slice(0, 6).map((t) => {
-    const base = t.mastery / 100;
-    return Array.from({ length: 30 }, (_, i) => {
-      const dayKey = new Date();
-      dayKey.setDate(dayKey.getDate() - (29 - i));
-      const cards = byDay.get(dayKey.toISOString().slice(0, 10)) ?? 0;
-      return cards > 0 ? Math.min(1, base + cards * 0.02) : base * 0.3;
-    });
-  });
+  const weakest = weaknesses[0];
+  const insight = weakest
+    ? `You reviewed ${totalCards} cards in 30 days. ${weakest.name} is your weakest area at ${weakest.mastery}% — ${weakest.due} cards due.`
+    : totalCards > 0
+      ? `You reviewed ${totalCards} cards in the last 30 days. Keep your ${streak}-day streak going.`
+      : "Complete your first review session to start tracking progress here.";
 
   return NextResponse.json({
-    daily,
-    totalCards,
-    totalReviews: totalCards,
-    streak,
     avgMastery,
+    totalReviews: totalCards,
+    totalDue,
+    streak,
     topics: topicRows,
     weaknesses,
     sessions,
-    heatmapData,
-    insight: `You reviewed ${totalCards} cards in the last 30 days across ${topics.length} topics.`,
+    activityDays,
+    weeklyTrend,
+    insight,
   });
 }

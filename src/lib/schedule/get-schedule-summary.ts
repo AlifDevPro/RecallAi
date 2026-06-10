@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aggregateTopicStats } from "@/lib/topics/aggregate-topic-stats";
 import type { ScheduleBlock, ScheduleSummary } from "./types";
+import { minutesToHours } from "./preferences-schema";
 import { minutesOf } from "./validate-blocks";
 
 export async function getScheduleSummary(
@@ -67,7 +68,7 @@ export async function getScheduleSummary(
 
   const { data: plan } = await supabase
     .from("study_plans")
-    .select("minutes_per_day, study_days, goal")
+    .select("minutes_per_day, hours_per_day, study_days, goal, schedule_narrative")
     .eq("user_id", userId)
     .single();
 
@@ -129,8 +130,13 @@ export async function getScheduleSummary(
     tomorrowDue,
     insight,
     studyPlan: {
-      minutesPerDay: plan?.minutes_per_day ?? 20,
+      minutesPerDay: plan?.minutes_per_day ?? 30,
+      hoursPerDay:
+        plan?.hours_per_day != null
+          ? Number(plan.hours_per_day)
+          : minutesToHours(plan?.minutes_per_day ?? 30),
       studyDays: plan?.study_days ?? [1, 2, 3, 4, 5],
+      scheduleNarrative: plan?.schedule_narrative ?? "",
     },
     tomorrowPreview,
   };

@@ -1,46 +1,17 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/route-auth";
 import { aggregateTopicStats } from "@/lib/topics/aggregate-topic-stats";
-
-function computeStreak(reviewDates: string[]): number {
-  if (!reviewDates.length) return 0;
-  const days = new Set(reviewDates.map((d) => d.slice(0, 10)));
-  let streak = 0;
-  const cursor = new Date();
-  for (;;) {
-    const key = cursor.toISOString().slice(0, 10);
-    if (days.has(key)) {
-      streak++;
-      cursor.setDate(cursor.getDate() - 1);
-    } else if (streak === 0) {
-      cursor.setDate(cursor.getDate() - 1);
-      const yesterday = cursor.toISOString().slice(0, 10);
-      if (days.has(yesterday)) {
-        streak++;
-        cursor.setDate(cursor.getDate() - 1);
-      } else {
-        break;
-      }
-    } else {
-      break;
-    }
-  }
-  return streak;
-}
+import { mergeExtendedSettings, pickExtendedSettings } from "@/lib/profile/extended";
+import { computeReviewStreak, localDateKey } from "@/lib/review/streak";
 
 export async function GET() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("display_name, email, bio, avatar_url, plan, created_at")
+    .select("display_name, email, bio, avatar_url, plan, created_at, settings")
     .eq("id", user.id)
     .single();
 
@@ -61,18 +32,21 @@ export async function GET() {
     .order("reviewed_at", { ascending: false });
 
   const totalReviews = (reviews ?? []).reduce((s, r) => s + r.cards_reviewed, 0);
-  const streak = computeStreak((reviews ?? []).map((r) => r.reviewed_at));
-
+  const reviewDateSet = new Set<string>();
   const byDay = new Map<string, number>();
   for (const r of reviews ?? []) {
-    const day = r.reviewed_at.slice(0, 10);
+    const d = new Date(r.reviewed_at);
+    const day = Number.isNaN(d.getTime()) ? r.reviewed_at.slice(0, 10) : localDateKey(d);
+    reviewDateSet.add(day);
     byDay.set(day, (byDay.get(day) ?? 0) + r.cards_reviewed);
   }
+  const streak = computeReviewStreak(reviewDateSet);
+
   const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const activity = weekDays.map((day, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
-    const key = d.toISOString().slice(0, 10);
+    const key = localDateKey(d);
     return { day, v: byDay.get(key) ?? 0 };
   });
 
@@ -84,6 +58,10 @@ export async function GET() {
     .slice(0, 2)
     .toUpperCase();
 
+  const extended = pickExtendedSettings(
+    profile?.settings as Record<string, unknown> | undefined
+  );
+
   return NextResponse.json({
     profile: {
       displayName,
@@ -93,6 +71,7 @@ export async function GET() {
       plan: profile?.plan ?? "free",
       joinedAt: profile?.created_at,
       initials,
+      ...extended,
     },
     stats: {
       streak,
@@ -106,17 +85,13 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   const body = await request.json();
   const updates: Record<string, unknown> = {};
+  const extendedPatch: Record<string, unknown> = {};
 
   if (typeof body.displayName === "string") {
     updates.display_name = body.displayName.trim();
@@ -127,9 +102,39 @@ export async function PATCH(request: Request) {
   if (typeof body.avatarUrl === "string") {
     updates.avatar_url = body.avatarUrl;
   }
+  if (body.avatarUrl === null) {
+    updates.avatar_url = null;
+  }
 
-  if (Object.keys(updates).length === 0) {
+  const extendedKeys = [
+    "skillLevel",
+    "timezone",
+    "location",
+    "primaryGoal",
+    "website",
+    "github",
+    "linkedin",
+  ] as const;
+  for (const key of extendedKeys) {
+    if (key in body) {
+      extendedPatch[key] = typeof body[key] === "string" ? body[key].trim() : body[key];
+    }
+  }
+
+  if (Object.keys(updates).length === 0 && Object.keys(extendedPatch).length === 0) {
     return NextResponse.json({ error: "No valid fields" }, { status: 400 });
+  }
+
+  if (Object.keys(extendedPatch).length > 0) {
+    const { data: existing } = await supabase
+      .from("profiles")
+      .select("settings")
+      .eq("id", user.id)
+      .single();
+    updates.settings = mergeExtendedSettings(
+      existing?.settings as Record<string, unknown> | undefined,
+      extendedPatch
+    );
   }
 
   updates.updated_at = new Date().toISOString();

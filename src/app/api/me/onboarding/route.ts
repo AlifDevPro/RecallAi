@@ -1,17 +1,13 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { logRouteError } from "@/lib/api/log-route-error";
 import { onboardingSchema } from "@/lib/auth/schemas";
-import { seedUserDashboardData } from "@/lib/onboarding/seed-user-data";
+import { hoursToMinutes } from "@/lib/schedule/preferences-schema";
+import { requireUser } from "@/lib/supabase/route-auth";
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   let body: unknown;
   try {
@@ -28,14 +24,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const { name, goal, goalTemplate, level, minutesPerDay, days, deadline, skip } =
+  const { name, goal, goalTemplate, level, hoursPerDay, days, deadline, skip } =
     parsed.data;
 
   const displayName = name || user.user_metadata?.full_name || "Student";
   const planGoal = skip ? "Get started with spaced repetition" : goal;
   const planLevel = skip ? "beginner" : level;
-  const planMinutes = skip ? 20 : minutesPerDay;
+  const planHours = skip ? 0.5 : hoursPerDay;
+  const planMinutes = hoursToMinutes(planHours);
   const planDays = skip ? [1, 3, 5] : days;
+  const scheduleNarrative = skip
+    ? ""
+    : `Goal: ${goal}. Study ${planHours}h/day on selected days. Level: ${level}.${deadline ? ` Deadline: ${deadline}.` : ""}`;
 
   const { error: profileError } = await supabase
     .from("profiles")
@@ -46,6 +46,7 @@ export async function POST(request: Request) {
     .eq("id", user.id);
 
   if (profileError) {
+    logRouteError("POST /api/me/onboarding", profileError, { userId: user.id });
     return NextResponse.json({ error: profileError.message }, { status: 500 });
   }
 
@@ -58,20 +59,16 @@ export async function POST(request: Request) {
     goal: planGoal,
     goal_template: goalTemplate ?? "",
     level: planLevel,
+    hours_per_day: planHours,
     minutes_per_day: planMinutes,
     study_days: planDays,
     deadline: deadline || null,
+    schedule_narrative: scheduleNarrative,
   });
 
   if (planError) {
+    logRouteError("POST /api/me/onboarding", planError, { userId: user.id });
     return NextResponse.json({ error: planError.message }, { status: 500 });
-  }
-
-  try {
-    await seedUserDashboardData(supabase, user.id);
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Seed failed";
-    return NextResponse.json({ error: message }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });

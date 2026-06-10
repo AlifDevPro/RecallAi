@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -31,6 +32,10 @@ import {
 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { MobileNav } from "@/components/layout/MobileNav";
+import {
+  ScheduleAiPanel,
+  type ScheduleGenerateParams,
+} from "@/components/schedule/ScheduleAiPanel";
 import {
   DAY_LABELS,
   type BlockKind,
@@ -150,8 +155,24 @@ function ScheduleSkeleton() {
   );
 }
 
+type SchedulePreferences = {
+  hoursPerDay: number;
+  scheduleNarrative: string;
+};
+
+async function fetchPreferences(): Promise<SchedulePreferences> {
+  const res = await fetch("/api/me/schedule/preferences");
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error((d as { error?: string }).error ?? "Failed to load preferences");
+  }
+  return res.json() as Promise<SchedulePreferences>;
+}
+
 export function ScheduleView() {
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
+  const welcomeMode = searchParams.get("welcome") === "1";
   const today = new Date().getDay();
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedDay, setSelectedDay] = useState(today);
@@ -163,6 +184,10 @@ export function ScheduleView() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [aiRegenerating, setAiRegenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiSuccess, setAiSuccess] = useState<string | null>(null);
+  const [narrative, setNarrative] = useState("");
+  const [saveNarrative, setSaveNarrative] = useState(true);
+  const [narrativeHydrated, setNarrativeHydrated] = useState(false);
   const [filter, setFilter] = useState<BlockKind | "all">("all");
   const [editing, setEditing] = useState<ScheduleBlock | null>(null);
   const [creating, setCreating] = useState(false);
@@ -179,6 +204,18 @@ export function ScheduleView() {
     queryKey: ["schedule-summary", selectedDay],
     queryFn: () => fetchSummary(selectedDay),
   });
+
+  const preferencesQuery = useQuery({
+    queryKey: ["schedule-preferences"],
+    queryFn: fetchPreferences,
+  });
+
+  useEffect(() => {
+    if (preferencesQuery.data && !narrativeHydrated) {
+      setNarrative(preferencesQuery.data.scheduleNarrative ?? "");
+      setNarrativeHydrated(true);
+    }
+  }, [preferencesQuery.data, narrativeHydrated]);
 
   useEffect(() => {
     if (scheduleQuery.isSuccess) {
@@ -254,25 +291,59 @@ export function ScheduleView() {
     mutatePlan((p) => p.map((b) => ({ ...b, done: false })));
   };
 
-  const regenerateWithAi = async () => {
+  const handleAiGenerate = async (params: ScheduleGenerateParams) => {
     setAiRegenerating(true);
     setAiError(null);
+    setAiSuccess(null);
     try {
       const res = await fetch("/api/ai/schedule/regenerate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ day: selectedDay }),
+        body: JSON.stringify({
+          day: params.scope === "day" ? selectedDay : undefined,
+          scope: params.scope,
+          mode: params.mode,
+          narrative: params.narrative,
+          saveNarrative: params.saveNarrative,
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "AI generation failed");
+      if (!res.ok) {
+        const errMsg =
+          typeof data.error === "string"
+            ? data.error
+            : JSON.stringify(data.error ?? "AI generation failed");
+        throw new Error(errMsg);
+      }
 
       const aiBlocks = parseAiScheduleBlocks(data.schedule);
-      const mapped = aiBlocksToScheduleBlocks(aiBlocks, selectedDay);
-      if (mapped.length === 0) throw new Error("No blocks generated for this day");
 
-      setPlan(mapped);
-      setIsDirty(true);
-      await persistPlan(selectedDay, mapped);
+      if (params.scope === "week") {
+        let totalBlocks = 0;
+        for (let d = 0; d <= 6; d++) {
+          const mapped = aiBlocksToScheduleBlocks(aiBlocks, d);
+          totalBlocks += mapped.length;
+          await putSchedule(d, mapped);
+          queryClient.invalidateQueries({ queryKey: ["schedule", d] });
+          queryClient.invalidateQueries({ queryKey: ["schedule-summary", d] });
+        }
+        const mappedToday = aiBlocksToScheduleBlocks(aiBlocks, selectedDay);
+        setPlan(mappedToday);
+        setHydratedDay(selectedDay);
+        setIsDirty(false);
+        setAiSuccess(`Generated ${totalBlocks} blocks across the week — saved.`);
+      } else {
+        const mapped = aiBlocksToScheduleBlocks(aiBlocks, selectedDay);
+        if (mapped.length === 0) throw new Error("No blocks generated for this day");
+        setPlan(mapped);
+        setIsDirty(true);
+        await persistPlan(selectedDay, mapped);
+        setAiSuccess(`Generated ${mapped.length} blocks — saved.`);
+      }
+
+      if (params.saveNarrative) {
+        queryClient.invalidateQueries({ queryKey: ["schedule-preferences"] });
+      }
     } catch (e) {
       setAiError(e instanceof Error ? e.message : "AI generation failed");
     } finally {
@@ -360,15 +431,24 @@ export function ScheduleView() {
           {aiError && (
             <div className="p-4 rounded-xl bg-again/10 border border-again/30 flex items-center justify-between gap-4">
               <p className="text-sm text-again">{aiError}</p>
-              <button
-                type="button"
-                onClick={() => void regenerateWithAi()}
-                className="text-sm font-medium text-primary hover:underline shrink-0"
-              >
-                Try again
-              </button>
             </div>
           )}
+
+          {aiSuccess && (
+            <div className="p-4 rounded-xl bg-good/10 border border-good/30">
+              <p className="text-sm text-good">{aiSuccess}</p>
+            </div>
+          )}
+
+          <ScheduleAiPanel
+            narrative={narrative}
+            onNarrativeChange={setNarrative}
+            saveNarrative={saveNarrative}
+            onSaveNarrativeChange={setSaveNarrative}
+            loading={aiRegenerating}
+            onGenerate={handleAiGenerate}
+            welcomeMode={welcomeMode}
+          />
 
           <header className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="space-y-2">
@@ -400,7 +480,14 @@ export function ScheduleView() {
               </button>
               <button
                 type="button"
-                onClick={() => void regenerateWithAi()}
+                onClick={() =>
+                  void handleAiGenerate({
+                    scope: "day",
+                    mode: narrative.trim() ? "narrative" : "profile",
+                    narrative: narrative.trim() || undefined,
+                    saveNarrative,
+                  })
+                }
                 disabled={aiRegenerating}
                 className="inline-flex items-center gap-2 h-11 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
@@ -409,7 +496,7 @@ export function ScheduleView() {
                 ) : (
                   <Wand2 className="size-4" />
                 )}
-                Regenerate with AI
+                Regenerate today
               </button>
             </div>
           </header>
@@ -468,7 +555,11 @@ export function ScheduleView() {
               icon={Clock}
               label="Learning time"
               value={fmtDuration(learningMinutes)}
-              hint={`${plan.filter((b) => ["review", "learn", "recall"].includes(b.kind)).length} sessions today`}
+              hint={
+                summary
+                  ? `${summary.studyPlan.hoursPerDay}h budget · ${plan.filter((b) => ["review", "learn", "recall"].includes(b.kind)).length} sessions`
+                  : `${plan.filter((b) => ["review", "learn", "recall"].includes(b.kind)).length} sessions today`
+              }
               accent="text-primary"
             />
             <StatCard
@@ -536,7 +627,14 @@ export function ScheduleView() {
                   <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
                     <button
                       type="button"
-                      onClick={() => void regenerateWithAi()}
+                      onClick={() =>
+                        void handleAiGenerate({
+                          scope: "day",
+                          mode: narrative.trim() ? "narrative" : "profile",
+                          narrative: narrative.trim() || undefined,
+                          saveNarrative,
+                        })
+                      }
                       disabled={aiRegenerating}
                       className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
                     >

@@ -49,3 +49,44 @@ export async function GET() {
 
   return NextResponse.json({ users });
 }
+
+export async function PATCH(request: Request) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const isAdmin = await requireAdmin(supabase, user.id);
+  if (!isAdmin) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const body = await request.json();
+  const targetId = body.id as string | undefined;
+  const role = body.role as string | undefined;
+
+  if (!targetId || !role) {
+    return NextResponse.json({ error: "Missing id or role" }, { status: 400 });
+  }
+
+  const dbRole = role === "admin" ? "admin" : "user";
+  if (targetId === user.id && dbRole !== "admin") {
+    return NextResponse.json({ error: "Cannot demote your own admin access" }, { status: 400 });
+  }
+
+  const service = createServiceClient();
+  const { error } = await service
+    .from("profiles")
+    .update({ role: dbRole, updated_at: new Date().toISOString() })
+    .eq("id", targetId);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true, role: dbRole === "admin" ? "admin" : "member" });
+}

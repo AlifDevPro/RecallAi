@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Bell,
   BookOpen,
@@ -14,40 +15,136 @@ import {
 import { Sidebar } from "@/components/layout/Sidebar";
 import { MobileNav } from "@/components/layout/MobileNav";
 
+type TopicRow = { slug: string; name: string };
+
 export function SettingsView() {
+  const router = useRouter();
   const [notifTime, setNotifTime] = useState("09:00");
   const [maxCards, setMaxCards] = useState("30");
   const [sessionLength, setSessionLength] = useState("15");
   const [weeklyEmail, setWeeklyEmail] = useState(true);
   const [notifStyle, setNotifStyle] = useState("detailed");
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [timezone, setTimezone] = useState("America/Los_Angeles");
+  const [topics, setTopics] = useState<TopicRow[]>([]);
+  const [topicOrder, setTopicOrder] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   useEffect(() => {
-    fetch("/api/me/settings")
-      .then((r) => r.json())
-      .then((d) => {
-        const s = d.settings ?? {};
+    Promise.all([
+      fetch("/api/me/settings").then((r) => r.json()),
+      fetch("/api/me/profile").then((r) => r.json()),
+      fetch("/api/me/topics").then((r) => r.json()),
+    ])
+      .then(([settingsRes, profileRes, topicsRes]) => {
+        const s = settingsRes.settings ?? {};
         if (s.notifTime) setNotifTime(s.notifTime);
         if (s.maxCards) setMaxCards(String(s.maxCards));
         if (s.sessionLength) setSessionLength(String(s.sessionLength));
         if (typeof s.weeklyEmail === "boolean") setWeeklyEmail(s.weeklyEmail);
         if (s.notifStyle) setNotifStyle(s.notifStyle);
+        if (Array.isArray(s.topicOrder)) setTopicOrder(s.topicOrder);
+
+        if (profileRes.profile) {
+          setDisplayName(profileRes.profile.displayName ?? "");
+          setEmail(profileRes.profile.email ?? "");
+          setTimezone(profileRes.profile.timezone ?? "America/Los_Angeles");
+        }
+
+        const list = (topicsRes.topics ?? []).map((t: { slug: string; name: string }) => ({
+          slug: t.slug,
+          name: t.name,
+        }));
+        setTopics(list);
       })
       .catch(() => {});
   }, []);
 
+  const orderedTopics = useMemo(() => {
+    if (!topicOrder.length) return topics;
+    const bySlug = new Map(topics.map((t) => [t.slug, t]));
+    const ordered = topicOrder.map((slug) => bySlug.get(slug)).filter(Boolean) as TopicRow[];
+    for (const t of topics) {
+      if (!topicOrder.includes(t.slug)) ordered.push(t);
+    }
+    return ordered;
+  }, [topics, topicOrder]);
+
   const saveSettings = async () => {
     setSaving(true);
+    setMessage(null);
     try {
-      await fetch("/api/me/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          settings: { notifTime, maxCards, sessionLength, weeklyEmail, notifStyle },
+      const [settingsRes, profileRes] = await Promise.all([
+        fetch("/api/me/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            settings: { notifTime, maxCards, sessionLength, weeklyEmail, notifStyle, topicOrder },
+          }),
         }),
-      });
+        fetch("/api/me/profile", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ displayName, timezone }),
+        }),
+      ]);
+      if (!settingsRes.ok || !profileRes.ok) throw new Error("Save failed");
+      setMessage({ type: "ok", text: "Settings saved." });
+    } catch {
+      setMessage({ type: "err", text: "Failed to save settings." });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const moveTopic = (slug: string, dir: -1 | 1) => {
+    const slugs = orderedTopics.map((t) => t.slug);
+    const idx = slugs.indexOf(slug);
+    if (idx < 0) return;
+    const next = idx + dir;
+    if (next < 0 || next >= slugs.length) return;
+    const copy = [...slugs];
+    [copy[idx], copy[next]] = [copy[next], copy[idx]];
+    setTopicOrder(copy);
+  };
+
+  const downloadExport = async (kind: "cards" | "reviews") => {
+    setExporting(kind);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/me/export/${kind}`);
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `recall-${kind}-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setMessage({ type: "err", text: "Export failed." });
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const deleteAccount = async () => {
+    if (!window.confirm("Delete your account and all data? This cannot be undone.")) return;
+    setDeleting(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/me/account", { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Delete failed");
+      router.push("/login");
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof Error ? e.message : "Delete failed." });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -65,8 +162,17 @@ export function SettingsView() {
             </button>
           </div>
 
+          {message && (
+            <p className={`mb-4 text-sm rounded-lg px-3 py-2 border ${
+              message.type === "ok"
+                ? "text-good bg-good/10 border-good/30"
+                : "text-again bg-again/10 border-again/30"
+            }`}>
+              {message.text}
+            </p>
+          )}
+
           <div className="space-y-8">
-            {/* Notifications */}
             <section className="bg-surface rounded-2xl border border-border/20 p-6">
               <div className="flex items-center gap-3 mb-6">
                 <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -124,7 +230,6 @@ export function SettingsView() {
               </div>
             </section>
 
-            {/* Study Preferences */}
             <section className="bg-surface rounded-2xl border border-border/20 p-6">
               <div className="flex items-center gap-3 mb-6">
                 <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -166,7 +271,6 @@ export function SettingsView() {
               </div>
             </section>
 
-            {/* Topic Organization */}
             <section className="bg-surface rounded-2xl border border-border/20 p-6">
               <div className="flex items-center gap-3 mb-6">
                 <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -174,28 +278,41 @@ export function SettingsView() {
                 </div>
                 <div>
                   <h2 className="text-lg font-semibold">Topic Organization</h2>
-                  <p className="text-xs text-muted-foreground">Manage your learning topics</p>
+                  <p className="text-xs text-muted-foreground">Reorder topics (saved with settings)</p>
                 </div>
               </div>
 
               <div className="space-y-2">
-                {["Algorithms", "Database Systems", "Python", "System Design"].map((topic, i) => (
-                  <div key={topic} className="flex items-center justify-between p-3 rounded-xl bg-surface-raised/50">
-                    <span className="text-sm font-medium">{topic}</span>
-                    <div className="flex items-center gap-2">
-                      <button className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                        {i > 0 ? "Move up" : ""}
-                      </button>
-                      <button className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                        {i < 3 ? "Move down" : ""}
-                      </button>
+                {orderedTopics.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No topics yet. Add one from the Topics page.</p>
+                ) : (
+                  orderedTopics.map((topic, i) => (
+                    <div key={topic.slug} className="flex items-center justify-between p-3 rounded-xl bg-surface-raised/50">
+                      <span className="text-sm font-medium">{topic.name}</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={i === 0}
+                          onClick={() => moveTopic(topic.slug, -1)}
+                          className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30"
+                        >
+                          Move up
+                        </button>
+                        <button
+                          type="button"
+                          disabled={i === orderedTopics.length - 1}
+                          onClick={() => moveTopic(topic.slug, 1)}
+                          className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30"
+                        >
+                          Move down
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </section>
 
-            {/* Account */}
             <section className="bg-surface rounded-2xl border border-border/20 p-6">
               <div className="flex items-center gap-3 mb-6">
                 <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -212,7 +329,8 @@ export function SettingsView() {
                   <label className="block text-sm font-medium mb-2">Display name</label>
                   <input
                     type="text"
-                    defaultValue="Alex Chen"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
                     className="w-full h-11 px-4 bg-surface-raised rounded-xl border border-border/20 text-sm focus:outline-none focus:border-primary/40"
                   />
                 </div>
@@ -222,25 +340,29 @@ export function SettingsView() {
                     <Mail className="size-4 text-muted-foreground" />
                     <input
                       type="email"
-                      defaultValue="alex@example.com"
-                      className="flex-1 h-11 px-4 bg-surface-raised rounded-xl border border-border/20 text-sm focus:outline-none focus:border-primary/40"
+                      value={email}
+                      readOnly
+                      className="flex-1 h-11 px-4 bg-surface-raised rounded-xl border border-border/20 text-sm text-muted-foreground"
                     />
                   </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-2">Timezone</label>
-                  <select className="w-full h-11 px-4 bg-surface-raised rounded-xl border border-border/20 text-sm focus:outline-none focus:border-primary/40">
-                    <option>UTC-8 (Pacific Time)</option>
-                    <option>UTC-5 (Eastern Time)</option>
-                    <option>UTC+0 (GMT)</option>
-                    <option>UTC+1 (CET)</option>
-                    <option>UTC+8 (Singapore)</option>
+                  <select
+                    value={timezone}
+                    onChange={(e) => setTimezone(e.target.value)}
+                    className="w-full h-11 px-4 bg-surface-raised rounded-xl border border-border/20 text-sm focus:outline-none focus:border-primary/40"
+                  >
+                    <option value="America/Los_Angeles">Pacific Time</option>
+                    <option value="America/New_York">Eastern Time</option>
+                    <option value="Europe/London">GMT</option>
+                    <option value="Europe/Paris">CET</option>
+                    <option value="Asia/Singapore">Singapore</option>
                   </select>
                 </div>
               </div>
             </section>
 
-            {/* Data Export */}
             <section className="bg-surface rounded-2xl border border-border/20 p-6">
               <div className="flex items-center gap-3 mb-6">
                 <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -253,18 +375,27 @@ export function SettingsView() {
               </div>
 
               <div className="flex flex-wrap gap-3">
-                <button className="inline-flex items-center gap-2 px-4 py-2.5 bg-surface-raised rounded-xl text-sm font-medium hover:bg-surface transition-colors">
+                <button
+                  type="button"
+                  disabled={exporting === "cards"}
+                  onClick={() => void downloadExport("cards")}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-surface-raised rounded-xl text-sm font-medium hover:bg-surface transition-colors disabled:opacity-50"
+                >
                   <Download className="size-4" />
-                  Export cards (JSON)
+                  {exporting === "cards" ? "Exporting…" : "Export cards (JSON)"}
                 </button>
-                <button className="inline-flex items-center gap-2 px-4 py-2.5 bg-surface-raised rounded-xl text-sm font-medium hover:bg-surface transition-colors">
+                <button
+                  type="button"
+                  disabled={exporting === "reviews"}
+                  onClick={() => void downloadExport("reviews")}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-surface-raised rounded-xl text-sm font-medium hover:bg-surface transition-colors disabled:opacity-50"
+                >
                   <Download className="size-4" />
-                  Export review history
+                  {exporting === "reviews" ? "Exporting…" : "Export review history"}
                 </button>
               </div>
             </section>
 
-            {/* Danger Zone */}
             <section className="bg-surface rounded-2xl border border-again/20 p-6">
               <div className="flex items-center gap-3 mb-6">
                 <div className="size-10 rounded-xl bg-again/10 flex items-center justify-center">
@@ -276,9 +407,14 @@ export function SettingsView() {
                 </div>
               </div>
 
-              <button className="inline-flex items-center gap-2 px-4 py-2.5 bg-again/10 text-again rounded-xl text-sm font-medium hover:bg-again/20 transition-colors">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => void deleteAccount()}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-again/10 text-again rounded-xl text-sm font-medium hover:bg-again/20 transition-colors disabled:opacity-50"
+              >
                 <Trash2 className="size-4" />
-                Delete account and all data
+                {deleting ? "Deleting…" : "Delete account and all data"}
               </button>
             </section>
           </div>

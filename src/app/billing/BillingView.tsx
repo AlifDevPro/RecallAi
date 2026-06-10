@@ -48,16 +48,31 @@ const plans = [
 
 export function BillingView() {
   const [cycle, setCycle] = useState<"m" | "y">("m");
-  const [billing, setBilling] = useState({ plan: "free", usedPct: 0, quota: 1000, used: 0 });
+  const [billing, setBilling] = useState({
+    plan: "free",
+    usedPct: 0,
+    quota: 1000,
+    used: 0,
+    invoices: [] as { id: string; date: string; amount: string; status: string }[],
+  });
 
   useEffect(() => {
     fetch("/api/me/billing")
       .then((r) => r.json())
-      .then((d) => setBilling(d))
+      .then((d) =>
+        setBilling({
+          plan: d.plan ?? "free",
+          usedPct: d.usedPct ?? 0,
+          quota: d.quota ?? 1000,
+          used: d.used ?? 0,
+          invoices: d.invoices ?? [],
+        })
+      )
       .catch(() => {});
   }, []);
 
   const currentPlanName = billing.plan.charAt(0).toUpperCase() + billing.plan.slice(1);
+  const planKey = billing.plan.toLowerCase();
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -118,7 +133,9 @@ export function BillingView() {
 
           {/* Plans */}
           <div className="grid md:grid-cols-3 gap-4 mb-12">
-            {plans.map((p) => (
+            {plans.map((p) => {
+              const isCurrent = p.name.toLowerCase() === planKey;
+              return (
               <div
                 key={p.name}
                 className={`relative p-6 rounded-2xl border transition-all ${
@@ -151,10 +168,10 @@ export function BillingView() {
                 <p className="text-xs text-muted-foreground mb-5 min-h-[32px]">{p.desc}</p>
                 <button
                   disabled
-                  title={!p.current ? "Contact sales to upgrade" : undefined}
+                  title={!isCurrent ? "Payment integration not configured" : undefined}
                   className="w-full px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors mb-5 bg-surface-raised text-muted-foreground cursor-not-allowed"
                 >
-                  {p.current ? p.cta : "Contact sales"}
+                  {isCurrent ? "Current plan" : "Contact sales"}
                 </button>
                 <ul className="space-y-2.5 text-sm">
                   {p.features.map((f) => (
@@ -165,7 +182,8 @@ export function BillingView() {
                   ))}
                 </ul>
               </div>
-            ))}
+            );
+            })}
           </div>
 
           {/* Invoices */}
@@ -184,28 +202,32 @@ export function BillingView() {
                 </tr>
               </thead>
               <tbody>
-                {[
-                  ["INV-0042", "Mar 12, 2026", "$9.00", "paid"],
-                  ["INV-0041", "Feb 12, 2026", "$9.00", "paid"],
-                  ["INV-0040", "Jan 12, 2026", "$9.00", "paid"],
-                ].map(([id, date, amt, status]) => (
-                  <tr key={id} className="border-b border-border/10 last:border-0">
-                    <td className="px-5 py-3 font-mono text-xs">{id}</td>
-                    <td className="px-5 py-3 text-muted-foreground">{date}</td>
-                    <td className="px-5 py-3 font-mono font-semibold">{amt}</td>
-                    <td className="px-5 py-3">
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-good/15 text-good capitalize">
-                        <span className="size-1.5 rounded-full bg-current" />
-                        {status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3">
-                      <button className="size-8 rounded-md hover:bg-surface-raised flex items-center justify-center text-muted-foreground">
-                        <Download className="size-4" />
-                      </button>
+                {billing.invoices.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-8 text-center text-sm text-muted-foreground">
+                      No invoices yet. Invoices appear here after a paid plan is activated.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  billing.invoices.map((inv) => (
+                    <tr key={inv.id} className="border-b border-border/10 last:border-0">
+                      <td className="px-5 py-3 font-mono text-xs">{inv.id}</td>
+                      <td className="px-5 py-3 text-muted-foreground">{inv.date}</td>
+                      <td className="px-5 py-3 font-mono font-semibold">{inv.amount}</td>
+                      <td className="px-5 py-3">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-good/15 text-good capitalize">
+                          <span className="size-1.5 rounded-full bg-current" />
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3">
+                        <button type="button" disabled className="size-8 rounded-md text-muted-foreground opacity-40" title="Download not available">
+                          <Download className="size-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

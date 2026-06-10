@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/ai/rate-limit";
-import { streamWithFailover } from "@/lib/ai/router";
-import { TUTOR_SYSTEM } from "@/lib/ai/prompts";
-import { searchContent, formatRagContext, extractCitations } from "@/lib/vectors/search";
+import { requireUser } from "@/lib/supabase/route-auth";
 import { ingestDocument } from "@/lib/vectors/ingest";
+import {
+  isTutorDebugEnabled,
+  logTutorTurn,
+} from "@/lib/tutor/logger";
+import {
+  runTutorPipeline,
+  streamDisplayChunks,
+} from "@/lib/tutor/pipeline";
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   const rate = await checkRateLimit(user.id);
   if (!rate.ok) {
@@ -27,13 +27,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Message required" }, { status: 400 });
   }
 
+  const topicName = (body.topicName as string)?.trim() || null;
+  const topicSlug = (body.topicSlug as string)?.trim() || null;
+
   let threadId = body.threadId as string | undefined;
   if (!threadId) {
     const { data: thread } = await supabase
       .from("tutor_threads")
       .insert({
         user_id: user.id,
-        topic_slug: body.topicSlug ?? null,
+        topic_slug: topicSlug,
         title: message.slice(0, 60),
       })
       .select("id")
@@ -51,43 +54,59 @@ export async function POST(request: Request) {
     content: message,
   });
 
-  const matches = await searchContent(message, {
-    userId: user.id,
-    includePublic: true,
-  });
-  const context = formatRagContext(matches);
-  const citations = extractCitations(matches);
+  const { data: priorMessages } = await supabase
+    .from("tutor_messages")
+    .select("role, content")
+    .eq("thread_id", threadId)
+    .order("created_at", { ascending: true })
+    .limit(8);
 
-  const prompt = `Context chunks:\n${context}\n\nStudent question: ${message}`;
-
-  const { stream, finalize } = await streamWithFailover(prompt, {
-    system: TUTOR_SYSTEM,
-    route: "tutor-chat",
-    userId: user.id,
-  });
+  const recentTurns = (priorMessages ?? [])
+    .slice(-6)
+    .map((m) => ({
+      role: m.role === "assistant" ? "tutor" : "student",
+      content: m.content,
+    }));
 
   const encoder = new TextEncoder();
-  let fullText = "";
 
   const readable = new ReadableStream({
     async start(controller) {
-      controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify({ type: "meta", threadId, citations })}\n\n`)
-      );
       try {
-        for await (const chunk of stream) {
-          fullText += chunk;
+        const result = await runTutorPipeline({
+          message,
+          userId: user.id,
+          topicName,
+          topicSlug,
+          recentTurns,
+        });
+
+        const metaPayload: Record<string, unknown> = {
+          type: "meta",
+          threadId,
+          sources: result.sources,
+          structured: result.structured,
+        };
+        if (isTutorDebugEnabled() && result.debug) {
+          metaPayload.debug = result.debug;
+        }
+
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(metaPayload)}\n\n`)
+        );
+
+        for (const chunk of streamDisplayChunks(result.displayText)) {
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify({ type: "token", text: chunk })}\n\n`)
           );
+          await new Promise((r) => setTimeout(r, 12));
         }
-        await finalize();
 
         await supabase.from("tutor_messages").insert({
           thread_id: threadId,
           role: "assistant",
-          content: fullText,
-          citations,
+          content: result.displayText,
+          citations: result.sources,
         });
 
         await ingestDocument({
@@ -95,13 +114,14 @@ export async function POST(request: Request) {
           sourceId: `${threadId}-${Date.now()}`,
           userId: user.id,
           title: "Tutor exchange",
-          text: `Q: ${message}\nA: ${fullText}`,
+          text: `Q: ${message}\nA: ${result.displayText}`,
           metadata: { visibility: "private", threadId },
         });
 
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`));
       } catch (e) {
         const err = e instanceof Error ? e.message : "Stream failed";
+        logTutorTurn("tutor.error", { userId: user.id, error: err });
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ type: "error", error: err })}\n\n`)
         );

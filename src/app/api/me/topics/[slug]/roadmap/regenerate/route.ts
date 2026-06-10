@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/route-auth";
 import { generateWithFailover } from "@/lib/ai/router";
 import { isGroqConfigured } from "@/lib/ai/config";
 import { searchContent, formatRagContext } from "@/lib/vectors/search";
@@ -14,14 +14,9 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (auth.response) return auth.response;
+  const { supabase, user } = auth;
 
   if (!isGroqConfigured()) {
     return NextResponse.json({ error: "AI unavailable" }, { status: 503 });

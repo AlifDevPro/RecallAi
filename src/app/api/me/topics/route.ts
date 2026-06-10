@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/route-auth";
 
 import { aggregateTopicStats } from "@/lib/topics/aggregate-topic-stats";
 
@@ -22,21 +22,11 @@ import {
 
 export async function GET() {
 
-  const supabase = await createClient();
+  const auth = await requireUser();
 
-  const {
+  if (auth.response) return auth.response;
 
-    data: { user },
-
-  } = await supabase.auth.getUser();
-
-
-
-  if (!user) {
-
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  }
+  const { supabase, user } = auth;
 
 
 
@@ -60,21 +50,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
 
-  const supabase = await createClient();
+  const auth = await requireUser();
 
-  const {
+  if (auth.response) return auth.response;
 
-    data: { user },
-
-  } = await supabase.auth.getUser();
-
-
-
-  if (!user) {
-
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  }
+  const { supabase, user } = auth;
 
 
 
