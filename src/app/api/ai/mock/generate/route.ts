@@ -6,6 +6,13 @@ import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { searchContent, formatRagContext } from "@/lib/vectors/search";
 import { validateMockConfig, sectionTotal } from "@/lib/mock/validate-config";
 
+function isMissingCorrectIndexColumn(error: { code?: string; message?: string } | null) {
+  return (
+    error?.code === "PGRST204" ||
+    (error?.message?.includes("correct_index") && error.message.includes("schema cache"))
+  );
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -126,21 +133,40 @@ For MCQ questions include exactly 4 choices and correctIndex (0-based).`,
       );
     }
 
-    const rows = questions.map((q, i) => ({
-      attempt_id: attempt.id,
-      sort_order: i,
-      body: q.body,
-      marks: q.marks ?? 5,
-      topic: q.topic ?? topics[0] ?? "",
-      section: q.section ?? "Short",
-      choices: q.choices ? q.choices : null,
-      correct_index:
-        q.correctIndex != null && Number.isInteger(q.correctIndex) ? q.correctIndex : null,
-    }));
+    const rows = questions.map((q, i) => {
+      const correctIndex =
+        q.correctIndex != null && Number.isInteger(q.correctIndex) ? q.correctIndex : null;
+      return {
+        attempt_id: attempt.id,
+        sort_order: i,
+        body: q.body,
+        marks: q.marks ?? 5,
+        topic: q.topic ?? topics[0] ?? "",
+        section: q.section ?? "Short",
+        choices: q.choices ? { options: q.choices, correctIndex } : null,
+        correct_index: correctIndex,
+      };
+    });
 
     const { error: qError } = await supabase.from("mock_questions").insert(rows);
     if (qError) {
-      return NextResponse.json({ error: qError.message }, { status: 500 });
+      if (!isMissingCorrectIndexColumn(qError)) {
+        return NextResponse.json({ error: qError.message }, { status: 500 });
+      }
+
+      const compatibleRows = rows.map((row) => ({
+        attempt_id: row.attempt_id,
+        sort_order: row.sort_order,
+        body: row.body,
+        marks: row.marks,
+        topic: row.topic,
+        section: row.section,
+        choices: row.choices,
+      }));
+      const { error: retryError } = await supabase.from("mock_questions").insert(compatibleRows);
+      if (retryError) {
+        return NextResponse.json({ error: retryError.message }, { status: 500 });
+      }
     }
 
     return NextResponse.json({ attemptId: attempt.id, questionCount: rows.length });

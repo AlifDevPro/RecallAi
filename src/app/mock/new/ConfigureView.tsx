@@ -32,6 +32,28 @@ const MULT: Record<Modality, number> = { text: 1, voice: 0.75, image: 1.4 };
 
 const STEPS = ["Mode", "Scope", "Format", "Modality", "Rules", "Review"] as const;
 
+type GenerateMockResponse = {
+  attemptId?: string;
+  error?: string;
+};
+
+async function readGenerateResponse(res: Response): Promise<GenerateMockResponse> {
+  try {
+    return (await res.json()) as GenerateMockResponse;
+  } catch {
+    return {
+      error: res.ok ? undefined : "Mock generation failed. Please try again.",
+    };
+  }
+}
+
+function normalizeGenerateError(message: string) {
+  if (message.includes("correct_index") && message.includes("schema cache")) {
+    return "Mock generation hit an outdated database schema cache. Please try again.";
+  }
+  return message;
+}
+
 export function ConfigureView() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -44,6 +66,27 @@ export function ConfigureView() {
   const [topicOptions, setTopicOptions] = useState<string[]>(TOPICS);
 
   const [institutionOptions, setInstitutionOptions] = useState<string[]>(INSTITUTIONS);
+
+  // ---- form state ----
+  const [mode, setMode] = useState<"global" | "institutional">(
+    initialMode === "institutional" ? "institutional" : "global"
+  );
+  const [institutions, setInstitutions] = useState<string[]>([]);
+  const [instQuery, setInstQuery] = useState("");
+  const [topics, setTopics] = useState<string[]>(paperTopic ? [paperTopic] : ["Algorithms"]);
+  const [bloom, setBloom] = useState<string[]>(["Apply", "Analyze"]);
+  const [yearFrom, setYearFrom] = useState(2019);
+  const [yearTo, setYearTo] = useState(2024);
+  const [count, setCount] = useState(20);
+  const [sections, setSections] = useState({ mcq: 8, short: 8, long: 4, numerical: 0 });
+  const [modality, setModality] = useState<Modality>("text");
+  const [mixed, setMixed] = useState(false);
+  const [strict, setStrict] = useState(true);
+  const [shuffle, setShuffle] = useState(true);
+  const [negative, setNegative] = useState(false);
+  const [calc, setCalc] = useState(true);
+  const [webcam, setWebcam] = useState(false);
+  const [fullscreen, setFullscreen] = useState(true);
 
   useEffect(() => {
     fetch("/api/public/institutions")
@@ -62,34 +105,7 @@ export function ConfigureView() {
         if (names.length) setTopicOptions(names);
       })
       .catch(() => {});
-    if (paperTopic) setTopics([paperTopic]);
-  }, [paperTopic]);
-
-  useEffect(() => {
-    if (initialMode === "institutional") setMode("institutional");
-    if (initialMode === "global") setMode("global");
-  }, [initialMode]);
-
-  // ---- form state ----
-  const [mode, setMode] = useState<"global" | "institutional">(
-    initialMode === "institutional" ? "institutional" : "global"
-  );
-  const [institutions, setInstitutions] = useState<string[]>([]);
-  const [instQuery, setInstQuery] = useState("");
-  const [topics, setTopics] = useState<string[]>(["Algorithms"]);
-  const [bloom, setBloom] = useState<string[]>(["Apply", "Analyze"]);
-  const [yearFrom, setYearFrom] = useState(2019);
-  const [yearTo, setYearTo] = useState(2024);
-  const [count, setCount] = useState(20);
-  const [sections, setSections] = useState({ mcq: 8, short: 8, long: 4, numerical: 0 });
-  const [modality, setModality] = useState<Modality>("text");
-  const [mixed, setMixed] = useState(false);
-  const [strict, setStrict] = useState(true);
-  const [shuffle, setShuffle] = useState(true);
-  const [negative, setNegative] = useState(false);
-  const [calc, setCalc] = useState(true);
-  const [webcam, setWebcam] = useState(false);
-  const [fullscreen, setFullscreen] = useState(true);
+  }, []);
 
   const baselineMin = useMemo(
     () => sections.mcq * 1.5 + sections.short * 4 + sections.long * 12 + sections.numerical * 3,
@@ -135,8 +151,8 @@ export function ConfigureView() {
           paperId: paperId ?? undefined,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Mock generation failed");
+      const data = await readGenerateResponse(res);
+      if (!res.ok) throw new Error(normalizeGenerateError(data.error ?? "Mock generation failed"));
       if (!data.attemptId) throw new Error("No attempt was created");
       router.push(`/mock/exam/${data.attemptId}`);
     } catch (e) {

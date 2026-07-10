@@ -80,6 +80,7 @@ export function ExamRuntimeView() {
   const [secondsLeft, setSecondsLeft] = useState(90 * 60);
   const [examState, setExamState] = useState<ExamState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [confirmSubmit, setConfirmSubmit] = useState(false);
   const [tabSwitches, setTabSwitches] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
@@ -132,23 +133,29 @@ export function ExamRuntimeView() {
   }, [attemptId, router]);
 
   useEffect(() => {
-    void loadAttempt();
+    const timer = window.setTimeout(() => void loadAttempt(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadAttempt]);
 
   // Persistence
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (raw) {
-        const s = JSON.parse(raw);
-        if (s.answers) setAnswers(s.answers);
-        if (typeof s.secondsLeft === "number") {
-          const elapsed = Math.floor((Date.now() - s.savedAt) / 1000);
-          setSecondsLeft(Math.max(0, s.secondsLeft - elapsed));
+    const timer = window.setTimeout(() => {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (raw) {
+          const s = JSON.parse(raw);
+          if (s.answers) setAnswers(s.answers);
+          if (typeof s.secondsLeft === "number") {
+            const elapsed = Math.floor((Date.now() - s.savedAt) / 1000);
+            setSecondsLeft(Math.max(0, s.secondsLeft - elapsed));
+          }
+          if (typeof s.current === "number") setCurrent(s.current);
         }
-        if (typeof s.current === "number") setCurrent(s.current);
-      }
-    } catch {/* noop */}
+      } catch {/* noop */}
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -160,7 +167,8 @@ export function ExamRuntimeView() {
 
   useEffect(() => {
     if (examState === "ready" && secondsLeft === 0 && !confirmSubmit) {
-      setConfirmSubmit(true);
+      const timer = window.setTimeout(() => setConfirmSubmit(true), 0);
+      return () => window.clearTimeout(timer);
     }
   }, [secondsLeft, examState, confirmSubmit]);
 
@@ -275,6 +283,7 @@ export function ExamRuntimeView() {
   const handleSubmit = async () => {
     setExamState("grading");
     setGradingProgress(10);
+    setSubmitError(null);
     try {
       const res = await fetch(`/api/mock/attempts/${attemptId}/submit`, {
         method: "POST",
@@ -301,10 +310,10 @@ export function ExamRuntimeView() {
       setGradingProgress(100);
       localStorage.removeItem(storageKey);
       router.push(`/mock/result/${attemptId}`);
-    } catch {
+    } catch (e) {
       setExamState("ready");
-      setConfirmSubmit(false);
-      setLoadError("Submission failed — try again");
+      setConfirmSubmit(true);
+      setSubmitError(e instanceof Error ? e.message : "Submission failed. Please try again.");
     }
   };
 
@@ -439,9 +448,14 @@ export function ExamRuntimeView() {
             <p className="mt-2 text-sm text-muted-foreground">
               {status.filter((s) => s !== "answered").length} of {questions.length} questions are not fully answered. AI evaluation begins immediately.
             </p>
+            {submitError && (
+              <div className="mt-4 rounded-lg border border-again/30 bg-again/10 px-3 py-2 text-sm text-again">
+                {submitError}
+              </div>
+            )}
             <div className="mt-5 flex items-center justify-end gap-2">
-              <button onClick={() => setConfirmSubmit(false)} className="px-3 py-2 rounded-lg text-sm border border-border/40 hover:bg-surface">Cancel</button>
-              <button onClick={handleSubmit} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--exam-ok)] text-background">Submit & evaluate</button>
+              <button type="button" onClick={() => setConfirmSubmit(false)} className="px-3 py-2 rounded-lg text-sm border border-border/40 hover:bg-surface">Cancel</button>
+              <button type="button" onClick={() => void handleSubmit()} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--exam-ok)] text-background">Submit & evaluate</button>
             </div>
           </div>
         </div>

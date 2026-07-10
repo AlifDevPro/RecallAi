@@ -4,6 +4,15 @@ import { createNotification } from "@/lib/notifications/create-notification";
 import { gradeMockAttempt } from "@/lib/mock/grade-attempt";
 import { normalizeMockConfig } from "@/lib/mock/validate-config";
 
+function isMissingAnswerMetadataColumn(error: { code?: string; message?: string } | null) {
+  return (
+    error?.code === "PGRST204" &&
+    ["answer_audio_url", "answer_image_url", "answer_modality"].some((column) =>
+      error.message?.includes(column)
+    )
+  );
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -43,17 +52,35 @@ export async function POST(
   }[];
 
   for (const a of answers) {
-    await supabase.from("mock_answers").upsert(
+    const row = {
+      question_id: a.questionId,
+      attempt_id: id,
+      answer_text: a.answerText ?? null,
+      answer_audio_url: a.answerAudioUrl ?? null,
+      answer_image_url: a.answerImageUrl ?? null,
+      answer_modality: a.answerModality ?? null,
+    };
+    const { error: answerError } = await supabase
+      .from("mock_answers")
+      .upsert(row, { onConflict: "question_id" });
+
+    if (!answerError) continue;
+    if (!isMissingAnswerMetadataColumn(answerError)) {
+      return NextResponse.json({ error: answerError.message }, { status: 500 });
+    }
+
+    const { error: retryError } = await supabase.from("mock_answers").upsert(
       {
-        question_id: a.questionId,
-        attempt_id: id,
-        answer_text: a.answerText ?? null,
-        answer_audio_url: a.answerAudioUrl ?? null,
-        answer_image_url: a.answerImageUrl ?? null,
-        answer_modality: a.answerModality ?? null,
+        question_id: row.question_id,
+        attempt_id: row.attempt_id,
+        answer_text: row.answer_text,
+        answer_image_path: row.answer_image_url,
       },
       { onConflict: "question_id" }
     );
+    if (retryError) {
+      return NextResponse.json({ error: retryError.message }, { status: 500 });
+    }
   }
 
   const config = normalizeMockConfig(attempt.config);
@@ -61,14 +88,26 @@ export async function POST(
     config.tab_switches = body.tabSwitches;
   }
 
-  await supabase
+  const { error: submitError } = await supabase
     .from("mock_attempts")
     .update({ status: "submitted", config, submitted_at: new Date().toISOString() })
     .eq("id", id);
+  if (submitError) {
+    return NextResponse.json({ error: submitError.message }, { status: 500 });
+  }
 
-  const { totalScore, maxScore } = await gradeMockAttempt(supabase, id, user.id, config);
+  let totalScore = 0;
+  let maxScore = 0;
+  try {
+    const result = await gradeMockAttempt(supabase, id, user.id, config);
+    totalScore = result.totalScore;
+    maxScore = result.maxScore;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Grading failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 
-  await supabase
+  const { error: gradeError } = await supabase
     .from("mock_attempts")
     .update({
       status: "graded",
@@ -76,6 +115,9 @@ export async function POST(
       max_score: maxScore,
     })
     .eq("id", id);
+  if (gradeError) {
+    return NextResponse.json({ error: gradeError.message }, { status: 500 });
+  }
 
   await createNotification(supabase, {
     userId: user.id,
