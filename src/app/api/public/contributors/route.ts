@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { CONTRIBUTORS } from "@/lib/data/contributors";
+import { mapContributorRows } from "@/lib/contributors/map-contributors";
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -32,25 +33,10 @@ export async function GET(request: Request) {
     const ids = rows.map((r) => r.id);
     const { data: profiles } = await supabase
       .from("profiles")
-      .select("id, display_name, email")
+      .select("id, display_name, email, avatar_url")
       .in("id", ids);
-    const nameById = new Map(
-      (profiles ?? []).map((p) => [
-        p.id,
-        p.display_name ?? p.email?.split("@")[0] ?? "Contributor",
-      ])
-    );
 
-    const contributors = rows.map((r) => ({
-      id: r.id,
-      name: nameById.get(r.id) ?? "Contributor",
-      contributions: r.contributions,
-      accuracy: Number(r.accuracy),
-      verified: r.verified,
-      inst: r.institution,
-      tier: r.tier,
-      avatarUrl: `https://i.pravatar.cc/240?u=${r.id}`,
-    }));
+    const contributors = mapContributorRows(rows, profiles ?? []);
     return NextResponse.json({ contributors });
   }
 

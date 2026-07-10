@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, Crown, Building2, Calendar, ThumbsUp } from "lucide-react";
 import { PublicHeader } from "@/components/layout/PublicHeader";
+import { ContributorAvatar } from "@/components/contributors/ContributorAvatar";
 import type { Contributor } from "@/lib/data/contributors";
 
 export function ContributorProfileView({ userId }: { userId: string }) {
@@ -52,9 +53,8 @@ export function ContributorProfileView({ userId }: { userId: string }) {
 
         <header className="rounded-2xl border border-border/40 bg-surface p-6 sm:p-8 flex flex-col sm:flex-row items-center sm:items-start gap-6">
           <div className="relative">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={profile.avatarUrl} alt={profile.name} className="size-[140px] rounded-full object-cover" />
-            <div className="absolute -top-2 -right-2 size-9 rounded-full bg-[oklch(0.78_0.18_85)] flex items-center justify-center text-background shadow">
+            <ContributorAvatar src={profile.avatarUrl} name={profile.name} size={140} />
+            <div className="absolute -top-2 -right-2 size-9 rounded-full bg-[oklch(0.78_0.18_85)] flex items-center justify-center text-background shadow z-10">
               <Crown className="size-4" />
             </div>
           </div>

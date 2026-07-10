@@ -1,35 +1,56 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { Crown, CheckCircle2, TrendingUp, Search, Filter } from "lucide-react";
 import { PublicHeader } from "@/components/layout/PublicHeader";
-import { CONTRIBUTORS, TIER_GRADIENT, type Contributor } from "@/lib/data/contributors";
+import { ContributorAvatar } from "@/components/contributors/ContributorAvatar";
+import { useContributors } from "@/hooks/use-contributors";
+import { TIER_GRADIENT, type Contributor } from "@/lib/data/contributors";
+import { useState } from "react";
 
 function avatarSize(contributions: number, max: number) {
   const ratio = Math.log(contributions + 1) / Math.log(max + 1);
-  return Math.round(56 + ratio * 84); // 56 → 140 px
+  return Math.round(56 + ratio * 84);
+}
+
+function PodiumSkeleton() {
+  return (
+    <div className="flex items-end justify-center gap-6 sm:gap-12 animate-pulse">
+      {[110, 140, 92].map((size, i) => (
+        <div key={i} className="flex flex-col items-center">
+          <div className="rounded-full bg-surface-raised" style={{ width: size, height: size }} />
+          <div className="mt-3 h-4 w-20 bg-surface-raised rounded" />
+          <div className="mt-1 h-3 w-16 bg-surface-raised rounded" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GridSkeleton() {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-8 animate-pulse">
+      {Array.from({ length: 10 }).map((_, i) => (
+        <div key={i} className="flex flex-col items-center">
+          <div className="size-20 rounded-full bg-surface-raised" />
+          <div className="mt-3 h-4 w-16 bg-surface-raised rounded" />
+          <div className="mt-1 h-3 w-20 bg-surface-raised rounded" />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function ContributorsView() {
   const [range, setRange] = useState<"week" | "month" | "all">("all");
   const [q, setQ] = useState("");
-  const [contributors, setContributors] = useState<Contributor[]>(CONTRIBUTORS);
-
-  useEffect(() => {
-    fetch(`/api/public/contributors?range=${range}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.contributors?.length) setContributors(d.contributors);
-      })
-      .catch(() => {});
-  }, [range]);
+  const { contributors, loading, error } = useContributors(range);
 
   const list = contributors.filter(
     (c) =>
       q === "" ||
       c.name.toLowerCase().includes(q.toLowerCase()) ||
-      c.inst.toLowerCase().includes(q.toLowerCase()),
+      c.inst.toLowerCase().includes(q.toLowerCase())
   );
   const max = Math.max(...list.map((c) => c.contributions), 1);
   const top3 = list.slice(0, 3);
@@ -39,7 +60,6 @@ export function ContributorsView() {
     <div className="min-h-screen bg-background">
       <PublicHeader />
       <main>
-        {/* Hero */}
         <section className="relative overflow-hidden border-b border-border/30">
           <div className="aurora absolute -top-32 left-1/3 size-[420px] rounded-full bg-primary/15 blur-3xl" />
           <div className="relative max-w-5xl mx-auto px-4 sm:px-6 py-12 lg:py-16 text-center">
@@ -53,16 +73,16 @@ export function ContributorsView() {
           </div>
         </section>
 
-        {/* Podium */}
         <section className="max-w-5xl mx-auto px-4 sm:px-6 py-10">
-          <div className="flex items-end justify-center gap-6 sm:gap-12 flex-wrap">
-            {[top3[1], top3[0], top3[2]].filter(Boolean).map((c, i) => (
-              <PodiumSlot key={c.id} c={c} rank={i === 0 ? 2 : i === 1 ? 1 : 3} max={max} />
-            ))}
-          </div>
+          {loading ? <PodiumSkeleton /> : (
+            <div className="flex items-end justify-center gap-6 sm:gap-12 flex-wrap">
+              {[top3[1], top3[0], top3[2]].filter(Boolean).map((c, i) => (
+                <PodiumSlot key={c.id} c={c} rank={i === 0 ? 2 : i === 1 ? 1 : 3} max={max} />
+              ))}
+            </div>
+          )}
         </section>
 
-        {/* Controls + Grid */}
         <section className="max-w-6xl mx-auto px-4 sm:px-6 pb-16">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-8">
             <div className="flex items-center gap-1 p-1 rounded-md bg-surface border border-border/40">
@@ -94,9 +114,21 @@ export function ContributorsView() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-8">
-            {rest.map((c) => <ContributorCard key={c.id} c={c} max={max} />)}
-          </div>
+          {error && (
+            <p className="mb-6 text-sm text-again text-center">{error}</p>
+          )}
+
+          {loading ? (
+            <GridSkeleton />
+          ) : list.length === 0 ? (
+            <p className="text-center text-sm text-muted-foreground py-12">No contributors found.</p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-8">
+              {rest.map((c) => (
+                <ContributorCard key={c.id} c={c} max={max} />
+              ))}
+            </div>
+          )}
         </section>
       </main>
     </div>
@@ -115,16 +147,14 @@ function PodiumSlot({ c, rank, max }: { c: Contributor; rank: number; max: numbe
             aria-hidden
           />
         )}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <ContributorAvatar
           src={c.avatarUrl}
-          alt={c.name}
-          loading="lazy"
-          style={{ width: size, height: size }}
-          className="relative rounded-full object-cover transition-transform group-hover:scale-[1.03]"
+          name={c.name}
+          size={size}
+          imgClassName="relative transition-transform group-hover:scale-[1.03]"
         />
         <div
-          className={`absolute -top-2 -left-2 size-9 rounded-full bg-background flex items-center justify-center text-sm font-bold shadow-md ${
+          className={`absolute -top-2 -left-2 size-9 rounded-full bg-background flex items-center justify-center text-sm font-bold shadow-md z-10 ${
             rank === 1
               ? "text-[oklch(0.78_0.18_85)]"
               : rank === 2
@@ -135,7 +165,7 @@ function PodiumSlot({ c, rank, max }: { c: Contributor; rank: number; max: numbe
           #{rank}
         </div>
         {c.verified && (
-          <div className="absolute bottom-1 right-1 size-6 rounded-full bg-[var(--exam-ok)] flex items-center justify-center shadow">
+          <div className="absolute bottom-1 right-1 size-6 rounded-full bg-[var(--exam-ok)] flex items-center justify-center shadow z-10">
             <CheckCircle2 className="size-3.5 text-background" />
           </div>
         )}
@@ -159,16 +189,14 @@ function ContributorCard({ c, max }: { c: Contributor; max: number }) {
       className="group flex flex-col items-center text-center transition-transform hover:-translate-y-0.5"
     >
       <div className="relative">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <ContributorAvatar
           src={c.avatarUrl}
-          alt={c.name}
-          loading="lazy"
-          style={{ width: size, height: size }}
-          className="rounded-full object-cover transition-transform group-hover:scale-[1.04]"
+          name={c.name}
+          size={size}
+          imgClassName="transition-transform group-hover:scale-[1.04]"
         />
         {c.verified && (
-          <div className="absolute bottom-0.5 right-0.5 size-5 rounded-full bg-[var(--exam-ok)] flex items-center justify-center shadow">
+          <div className="absolute bottom-0.5 right-0.5 size-5 rounded-full bg-[var(--exam-ok)] flex items-center justify-center shadow z-10">
             <CheckCircle2 className="size-3 text-background" />
           </div>
         )}

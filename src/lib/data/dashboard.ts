@@ -12,10 +12,13 @@ export type DashboardTopic = {
 
 export type ActivityLevel = "high" | "medium" | "low" | "empty";
 
+export type WeeklyActivityDay = { day: string; cards: number };
+
 export type DashboardPayload = {
   displayName: string;
   topics: DashboardTopic[];
   forecast: { day: string; count: number }[];
+  weeklyActivity: WeeklyActivityDay[];
   activityGrid: ActivityLevel[];
   streakDays: number;
   insight: string;

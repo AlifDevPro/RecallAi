@@ -8,6 +8,23 @@ function isExternalUrl(path: string): boolean {
   return path.startsWith("http://") || path.startsWith("https://");
 }
 
+/** Resolve a storage path or external URL to something the browser can load. */
+export async function resolveScanUrl(
+  service: SupabaseClient,
+  path: string
+): Promise<string | null> {
+  if (!path) return null;
+  if (isExternalUrl(path)) return path;
+
+  const { data: signed, error } = await service.storage
+    .from(BUCKET)
+    .createSignedUrl(path, SIGNED_URL_TTL);
+  if (!error && signed?.signedUrl) return signed.signedUrl;
+
+  const { data: pub } = service.storage.from(BUCKET).getPublicUrl(path);
+  return pub?.publicUrl ?? null;
+}
+
 export async function resolvePaperScanUrls(
   service: SupabaseClient,
   paper: Paper
@@ -16,16 +33,8 @@ export async function resolvePaperScanUrls(
 
   const scans = await Promise.all(
     paper.scans.map(async (scan) => {
-      if (isExternalUrl(scan.pageUrl)) {
-        return scan;
-      }
-      const { data, error } = await service.storage
-        .from(BUCKET)
-        .createSignedUrl(scan.pageUrl, SIGNED_URL_TTL);
-      if (error || !data?.signedUrl) {
-        return scan;
-      }
-      return { ...scan, pageUrl: data.signedUrl };
+      const pageUrl = (await resolveScanUrl(service, scan.pageUrl)) ?? scan.pageUrl;
+      return { ...scan, pageUrl };
     })
   );
 
@@ -37,8 +46,5 @@ export async function getFirstScanDownloadUrl(
   paper: Paper
 ): Promise<string | null> {
   if (!paper.scans?.length) return null;
-  const first = paper.scans[0];
-  if (isExternalUrl(first.pageUrl)) return first.pageUrl;
-  const { data } = await service.storage.from(BUCKET).createSignedUrl(first.pageUrl, SIGNED_URL_TTL);
-  return data?.signedUrl ?? null;
+  return resolveScanUrl(service, paper.scans[0].pageUrl);
 }

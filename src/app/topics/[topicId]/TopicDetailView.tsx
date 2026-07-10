@@ -24,7 +24,7 @@ import {
   Award,
   AlertCircle,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { MobileNav } from "@/components/layout/MobileNav";
@@ -80,14 +80,13 @@ export function TopicDetailView() {
   const topicQuery = useQuery({
     queryKey: ["topic", topicId],
     queryFn: async () => {
-      try {
-        const r = await fetch(`/api/me/topics/${topicId}`);
-        if (r.status === 404) return { notFound: true as const };
-        if (!r.ok) return { notFound: true as const };
-        return { notFound: false as const, data: (await r.json()) as TopicPayload };
-      } catch {
-        return { notFound: true as const };
+      const r = await fetch(`/api/me/topics/${topicId}`);
+      const d = (await r.json().catch(() => ({}))) as TopicPayload & { error?: string };
+      if (r.status === 404) return { status: "not-found" as const };
+      if (!r.ok) {
+        throw new Error(d.error ?? "Failed to load topic");
       }
+      return { status: "ok" as const, data: d };
     },
   });
 
@@ -100,13 +99,13 @@ export function TopicDetailView() {
     },
   });
 
-  const topicData = topicQuery.data?.notFound === false ? topicQuery.data.data.topic : null;
+  const topicData = topicQuery.data?.status === "ok" ? topicQuery.data.data.topic : null;
   const topicName = topicData?.name ?? "";
   const topicStatus = topicData?.status ?? "active";
   const cards = topicData?.cards ?? [];
   const dueCount = topicData?.due ?? 0;
   const loading = topicQuery.isLoading;
-  const notFound = topicQuery.data?.notFound === true;
+  const notFound = topicQuery.data?.status === "not-found";
   const fetchError = topicQuery.error?.message ?? null;
 
   const refetchTopic = () => {
@@ -1045,18 +1044,48 @@ function InsightsView({
   onArchive: () => void;
   onDelete: () => void;
 }) {
-  const [data, setData] = useState<TopicInsightsPayload | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const raw = localStorage.getItem(INSIGHTS_CACHE_KEY(topicSlug));
-      return raw ? (JSON.parse(raw) as TopicInsightsPayload) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [data, setData] = useState<TopicInsightsPayload | null>(null);
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mgmtError, setMgmtError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/ai/topics/${topicSlug}/insights`);
+        if (!res.ok) {
+          const cached = localStorage.getItem(INSIGHTS_CACHE_KEY(topicSlug));
+          if (cached && !cancelled) {
+            setData(JSON.parse(cached) as TopicInsightsPayload);
+          }
+          return;
+        }
+        const d = (await res.json()) as TopicInsightsPayload;
+        if (!cancelled) {
+          setData(d);
+          if (d.summary) {
+            localStorage.setItem(INSIGHTS_CACHE_KEY(topicSlug), JSON.stringify(d));
+          }
+        }
+      } catch {
+        const cached = localStorage.getItem(INSIGHTS_CACHE_KEY(topicSlug));
+        if (cached && !cancelled) {
+          try {
+            setData(JSON.parse(cached) as TopicInsightsPayload);
+          } catch {
+            /* ignore */
+          }
+        }
+      } finally {
+        if (!cancelled) setInitialLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [topicSlug]);
 
   const regenerate = async () => {
     setLoading(true);
@@ -1110,7 +1139,9 @@ function InsightsView({
             </div>
             {error && <p className="text-xs text-again mb-2">{error}</p>}
             <p className="text-sm sm:text-base leading-relaxed text-foreground/90">
-              {loading
+              {initialLoading
+                ? "Loading insights…"
+                : loading
                 ? "Generating insights…"
                 : summary ??
                   `Generate AI insights for ${topicName} based on your cards and review history.`}

@@ -84,7 +84,7 @@ Protected routes require a session (see `middleware.ts`).
 - **Primary LLM / vision / OCR**: Gemini 2.5 (`GEMINI_MODEL`, default `gemini-2.5-flash`)
 - **Failover LLM**: Groq (`GROQ_MODEL`)
 - **Vision / OCR**: Groq (`GROQ_VISION_MODEL`) — question-paper upload OCR and mock handwritten answer grading
-- **Embeddings**: Google Gemini embedding API (`GEMINI_EMBEDDING_MODEL`, 768-dim vectors in Supabase pgvector)
+- **Embeddings**: Google Gemini embedding API (`GEMINI_EMBEDDING_MODEL`). Vector size is controlled by `EMBEDDING_DIMENSIONS` (default `768`; set to `1024` if you applied `012_embedding_1024.sql`).
 - **Vector store**: `content_documents` + `content_chunks` with `match_content_chunks()` RPC
 
 Set in `.env.local`:

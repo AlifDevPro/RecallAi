@@ -3,7 +3,7 @@ Preserve question numbers, marks in brackets, and section headers.
 Output plain text only.`;
 
 export const OCR_STRUCTURE = `You receive raw OCR text from exam papers. Fix OCR errors and split into individual questions.
-Return a JSON array only. Each item must have:
+Return a JSON object with a single key "questions" whose value is an array. Each item must have:
 - raw: original snippet
 - cleaned: corrected question text
 - inst: institution name (string)
@@ -12,7 +12,10 @@ Return a JSON array only. Each item must have:
 - topic: subject topic (e.g. "DBMS", "OS")
 - marks: number
 - type: "Short" | "Long" | "MCQ"
-- conf: object with inst, year, term, topic, marks as floats 0-1 (your confidence)`;
+- conf: object with inst, year, term, topic, marks as floats 0-1 (your confidence)
+
+Example shape: { "questions": [ { "raw": "...", "cleaned": "...", ... } ] }
+If no questions are found, return { "questions": [] }`;
 
 export const INSIGHT_SYSTEM = `Generate a 2-3 sentence weekly study insight for a student.
 Reference their weakest topics and due card counts from the context. Actionable tone. Plain text only.`;

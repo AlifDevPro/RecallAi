@@ -49,16 +49,35 @@ export async function POST(
       { system: INSIGHTS_SYSTEM, json: true, route: "topic-insights", userId: user.id }
     );
 
+    let payload: Record<string, unknown>;
     try {
-      return NextResponse.json(JSON.parse(text));
+      payload = JSON.parse(text) as Record<string, unknown>;
     } catch {
-      return NextResponse.json({
+      payload = {
         summary: text,
         strengths: [],
         weaknesses: [],
         actions: [],
-      });
+      };
     }
+
+    const insights = {
+      summary: typeof payload.summary === "string" ? payload.summary : String(payload.summary ?? ""),
+      strengths: Array.isArray(payload.strengths) ? payload.strengths : [],
+      weaknesses: Array.isArray(payload.weaknesses) ? payload.weaknesses : [],
+      actions: Array.isArray(payload.actions) ? payload.actions : [],
+      generatedAt: new Date().toISOString(),
+    };
+
+    await supabase.from("topics").update({ insights }).eq("id", topic.id);
+
+    return NextResponse.json({
+      summary: insights.summary,
+      strengths: insights.strengths,
+      weaknesses: insights.weaknesses,
+      actions: insights.actions,
+      cached: false,
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Insights generation failed";
     return NextResponse.json({ error: message }, { status: 503 });

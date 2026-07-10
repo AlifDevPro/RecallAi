@@ -1,4 +1,5 @@
 import { embedBatch } from "@/lib/ai/embeddings";
+import { getEmbeddingDimensions } from "@/lib/ai/config";
 import { createServiceClient } from "@/lib/supabase/service";
 import { chunkText } from "./chunk";
 
@@ -61,11 +62,12 @@ export async function ingestDocument(params: IngestParams): Promise<string | nul
     route: `ingest-${params.sourceType}`,
   });
 
+  const targetDim = getEmbeddingDimensions();
   const rows = chunks.map((content, chunk_index) => ({
     document_id: doc.id,
     chunk_index,
     content,
-    embedding: embeddings[chunk_index],
+    embedding: normalizeEmbedding(embeddings[chunk_index], targetDim),
     token_count: Math.ceil(content.length / 4),
   }));
 
@@ -75,4 +77,12 @@ export async function ingestDocument(params: IngestParams): Promise<string | nul
   }
 
   return doc.id;
+}
+
+function normalizeEmbedding(values: number[], targetDim: number): number[] {
+  if (values.length === targetDim) return values;
+  if (values.length > targetDim) return values.slice(0, targetDim);
+  const out = [...values];
+  while (out.length < targetDim) out.push(0);
+  return out;
 }

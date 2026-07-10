@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { CONTRIBUTORS, type Contributor } from "@/lib/data/contributors";
+import { useContributors } from "@/hooks/use-contributors";
+import { ContributorAvatar } from "@/components/contributors/ContributorAvatar";
+import type { Contributor } from "@/lib/data/contributors";
 
 function seededRand(seed: number) {
   return () => {
@@ -11,24 +12,13 @@ function seededRand(seed: number) {
   };
 }
 
-export function ContributorBubbles() {
-  const [contributors, setContributors] = useState<Contributor[]>(CONTRIBUTORS);
-
-  useEffect(() => {
-    fetch("/api/public/contributors")
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.contributors?.length) setContributors(d.contributors);
-      })
-      .catch(() => {});
-  }, []);
-
+function layoutBubbles(contributors: Contributor[]) {
   const max = Math.max(...contributors.map((c) => c.contributions), 1);
   const W = 100;
   const H = 100;
   const rand = seededRand(42);
-
   const placed: { xPct: number; yPct: number; r: number; c: Contributor }[] = [];
+
   for (const c of contributors) {
     const ratio = Math.log(c.contributions + 1) / Math.log(max + 1);
     const r = 24 + ratio * 60;
@@ -50,6 +40,55 @@ export function ContributorBubbles() {
     placed.push({ xPct, yPct, r, c });
   }
 
+  return placed;
+}
+
+function BubblesSkeleton() {
+  const dots = [
+    { x: 18, y: 22, r: 52 },
+    { x: 42, y: 12, r: 68 },
+    { x: 68, y: 28, r: 44 },
+    { x: 28, y: 58, r: 56 },
+    { x: 55, y: 52, r: 62 },
+    { x: 78, y: 62, r: 40 },
+  ];
+  return (
+    <div className="relative w-full h-[320px] sm:h-[380px] lg:h-[420px] mt-10 overflow-hidden animate-pulse">
+      {dots.map((d, i) => (
+        <div
+          key={i}
+          className="absolute rounded-full bg-surface-raised"
+          style={{
+            left: `${d.x}%`,
+            top: `${d.y}%`,
+            width: d.r * 2,
+            height: d.r * 2,
+            marginLeft: -d.r,
+            marginTop: -d.r,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+export function ContributorBubbles() {
+  const { contributors, loading } = useContributors("all");
+
+  if (loading) {
+    return <BubblesSkeleton />;
+  }
+
+  if (contributors.length === 0) {
+    return (
+      <div className="w-full h-[200px] mt-10 flex items-center justify-center text-sm text-muted-foreground">
+        Contributors will appear here as papers are verified.
+      </div>
+    );
+  }
+
+  const placed = layoutBubbles(contributors);
+
   return (
     <div className="relative w-full h-[320px] sm:h-[380px] lg:h-[420px] mt-10 overflow-hidden">
       {placed.map((b, i) => (
@@ -69,16 +108,24 @@ export function ContributorBubbles() {
           }}
           title={`${b.c.name} · ${b.c.contributions} papers`}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <ContributorAvatar
             src={b.c.avatarUrl}
-            alt={b.c.name}
-            loading="lazy"
-            className="size-full rounded-full object-cover transition-transform group-hover:scale-105"
+            name={b.c.name}
+            size={b.r * 2}
+            imgClassName="transition-transform group-hover:scale-105"
           />
           {b.c.verified && (
-            <div className="absolute bottom-0 right-0 size-4 rounded-full bg-[var(--exam-ok)] flex items-center justify-center">
-              <svg viewBox="0 0 12 12" className="size-2 text-background"><path d="M2 6l3 3 5-6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            <div className="absolute bottom-0 right-0 size-4 rounded-full bg-[var(--exam-ok)] flex items-center justify-center z-10">
+              <svg viewBox="0 0 12 12" className="size-2 text-background">
+                <path
+                  d="M2 6l3 3 5-6"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  fill="none"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </div>
           )}
         </Link>

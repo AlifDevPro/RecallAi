@@ -65,8 +65,19 @@ export function UploadView() {
     try {
       const res = await fetch("/api/ai/questions/extract", { method: "POST", body: formData });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Extraction failed");
-      setExtracted(data.extracted ?? []);
+      if (res.status === 503) {
+        throw new Error("AI is not configured — set GROQ_API_KEY in .env and rebuild the app");
+      }
+      if (!res.ok) {
+        throw new Error(data.error ?? "Extraction failed");
+      }
+      const items = (data.extracted ?? []) as Extracted[];
+      if (items.length === 0) {
+        throw new Error(
+          "No questions detected. Try a clearer scan, a text-based PDF, or paste questions as a .txt file."
+        );
+      }
+      setExtracted(items);
       setFilePaths(data.filePaths ?? []);
       if (data.extracted?.[0]) {
         setMetadata((m) => ({
@@ -170,11 +181,22 @@ export function UploadView() {
 
           {step === 1 && (
             <div>
-              <h2 className="text-xl font-bold tracking-tight flex items-center gap-2"><Sparkles className="size-5 text-primary" /> Extraction preview</h2>
+              <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
+                <Sparkles className="size-5 text-primary" /> Extraction preview
+                <span className="text-xs font-normal px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                  {extracted.length} question{extracted.length === 1 ? "" : "s"}
+                </span>
+              </h2>
               <p className="text-sm text-muted-foreground mt-1">Edit any field. Low-confidence fields are highlighted.</p>
+              {extracted.length === 0 ? (
+                <p className="mt-5 text-sm text-muted-foreground">
+                  No questions to preview. Go back and try a different file.
+                </p>
+              ) : (
               <div className="mt-5 space-y-3">
                 {extracted.map((e, idx) => <ExtractCard key={idx} value={e} onChange={(v) => setExtracted(extracted.map((x, i) => i === idx ? v : x))} onRemove={() => setExtracted(extracted.filter((_, i) => i !== idx))} />)}
               </div>
+              )}
               <div className="mt-5 text-xs text-muted-foreground">
                 {extracted.length} question{extracted.length === 1 ? "" : "s"} ready · accuracy check the institution & year before continuing.
               </div>
@@ -244,11 +266,19 @@ export function UploadView() {
             {step === 0 ? (
               <span />
             ) : step === STEPS.length - 2 ? (
-              <button onClick={() => void submitBatch()} disabled={submitting} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-70">
+              <button
+                onClick={() => void submitBatch()}
+                disabled={submitting || extracted.length === 0}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-70"
+              >
                 {submitting ? "Submitting…" : "Submit batch"} <ChevronRight className="size-4" />
               </button>
             ) : (
-              <button onClick={() => setStep(step + 1)} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90">
+              <button
+                onClick={() => setStep(step + 1)}
+                disabled={step === 1 && extracted.length === 0}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 Next <ChevronRight className="size-4" />
               </button>
             )}

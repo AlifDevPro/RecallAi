@@ -11,7 +11,6 @@ import {
   Upload,
   CheckCircle2,
   Image as ImageIcon,
-  FileText,
   Eye,
   Calendar,
   GraduationCap,
@@ -20,7 +19,7 @@ import {
 } from "lucide-react";
 import { FilterDropdown } from "@/components/ui/FilterDropdown";
 import { PublicHeader } from "@/components/layout/PublicHeader";
-import type { Paper } from "@/lib/data/question-papers";
+import type { PaperListItem } from "@/lib/data/question-papers";
 import type { PaperFacets } from "@/lib/papers/query-papers";
 import { paperListParamsToSearchParams } from "@/lib/papers/query-papers";
 
@@ -44,7 +43,7 @@ export function BankView() {
   const searchParams = useSearchParams();
   const queryKey = searchParams.toString();
 
-  const [papers, setPapers] = useState<Paper[]>([]);
+  const [papers, setPapers] = useState<PaperListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [initialLoading, setInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -67,7 +66,6 @@ export function BankView() {
       examType: parseListParam(sp.get("examType")),
       verifiedOnly: sp.get("verifiedOnly") === "true",
       hasPhoto: sp.get("hasPhoto") === "true",
-      hasDigital: sp.get("hasDigital") === "true",
       page: currentPage,
       limit: 24,
     };
@@ -83,7 +81,6 @@ export function BankView() {
   const examTypes = filters.examType;
   const verifiedOnly = filters.verifiedOnly;
   const withPhoto = filters.hasPhoto;
-  const withDigital = filters.hasDigital;
   const courses = filters.course;
 
   useEffect(() => {
@@ -187,8 +184,7 @@ export function BankView() {
     years.length +
     examTypes.length +
     (verifiedOnly ? 1 : 0) +
-    (withPhoto ? 1 : 0) +
-    (withDigital ? 1 : 0);
+    (withPhoto ? 1 : 0);
 
   const clearAll = () => {
     router.replace("/questions", { scroll: false });
@@ -252,8 +248,7 @@ export function BankView() {
       />
       <div className="space-y-2 pt-2 border-t border-border">
         <ToggleRow checked={verifiedOnly} onChange={(v) => updateParams({ verifiedOnly: v })} label="Verified only" icon={<CheckCircle2 className="size-3.5 text-[var(--exam-ok)]" />} />
-        <ToggleRow checked={withPhoto} onChange={(v) => updateParams({ hasPhoto: v })} label="Has photo / scan" icon={<ImageIcon className="size-3.5 text-accent" />} />
-        <ToggleRow checked={withDigital} onChange={(v) => updateParams({ hasDigital: v })} label="Has digital text" icon={<FileText className="size-3.5 text-primary" />} />
+        <ToggleRow checked={withPhoto} onChange={(v) => updateParams({ hasPhoto: v })} label="Has scan" icon={<ImageIcon className="size-3.5 text-accent" />} />
       </div>
       {activeFilterCount > 0 && (
         <button onClick={clearAll} className="w-full text-xs text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1.5 py-2 border border-border rounded-md">
@@ -271,13 +266,13 @@ export function BankView() {
           <div className="aurora absolute -top-20 left-1/4 size-[420px] rounded-full bg-primary/20 blur-3xl" />
           <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-12 lg:py-16">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-mono font-semibold uppercase tracking-wider">
-              <Library className="size-3" /> Real past papers · digital + scan
+              <Library className="size-3" /> Real past papers
             </div>
             <h1 className="mt-3 text-3xl sm:text-5xl font-bold tracking-tight max-w-3xl">
-              Every past paper. Both the original scan and a clean digital copy.
+              Browse verified past exam papers from every institution.
             </h1>
             <p className="mt-3 text-sm sm:text-base text-muted-foreground max-w-2xl">
-              Filter by university, course, department, semester, year and exam type. Search updates results from the database.
+              Filter by university, course, department, semester, year and exam type. Open any paper to view the original scan.
             </p>
             <div className="mt-6 flex flex-col sm:flex-row gap-2 max-w-2xl">
               <div className="relative flex-1">
@@ -419,9 +414,15 @@ function ToggleRow({ checked, onChange, label, icon }: { checked: boolean; onCha
   );
 }
 
-function PaperCard({ p }: { p: Paper }) {
+function PaperCard({ p }: { p: PaperListItem }) {
+  const cover = p.coverUrl ?? p.scans[0]?.pageUrl ?? null;
+
   return (
-    <Link href={`/questions/${p.id}`} className="group rounded-md border border-border bg-surface p-4 hover:border-primary/50 transition-colors flex flex-col">
+    <Link href={`/questions/${p.id}`} className="group rounded-md border border-border bg-surface overflow-hidden hover:border-primary/50 transition-colors flex flex-col">
+      <div className="aspect-[4/3] bg-surface-raised border-b border-border overflow-hidden">
+        <ScanCover src={cover} alt={`${p.course} scan`} />
+      </div>
+      <div className="p-4 flex flex-col flex-1">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -446,13 +447,49 @@ function PaperCard({ p }: { p: Paper }) {
       </div>
       <div className="mt-4 pt-3 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-2">
-          {p.hasDigital && <span className="inline-flex items-center gap-1 text-primary"><FileText className="size-3" /> Digital</span>}
-          {p.hasPhoto && <span className="inline-flex items-center gap-1 text-accent"><ImageIcon className="size-3" /> Photo</span>}
+          {p.hasPhoto && <span className="inline-flex items-center gap-1 text-accent"><ImageIcon className="size-3" /> Scan</span>}
           {p.verified && <span className="inline-flex items-center gap-1 text-[var(--exam-ok)]"><CheckCircle2 className="size-3" /> Verified</span>}
         </span>
         <span className="inline-flex items-center gap-1"><Eye className="size-3" /> {p.views}</span>
       </div>
+      </div>
     </Link>
+  );
+}
+
+function ScanCover({ src, alt }: { src: string | null; alt: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  if (!src || failed) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
+        <ImageIcon className="size-8 opacity-40" />
+        <span className="text-[11px]">Scan preview unavailable</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative w-full h-full">
+      {!loaded && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground animate-pulse">
+          <ImageIcon className="size-8 opacity-30" />
+        </div>
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        onError={() => setFailed(true)}
+        className={`w-full h-full object-cover object-top transition-opacity duration-300 group-hover:scale-[1.02] ${
+          loaded ? "opacity-100" : "opacity-0"
+        }`}
+      />
+    </div>
   );
 }
 

@@ -49,40 +49,29 @@ export async function POST(request: Request) {
     file_paths: filePaths,
   };
 
-  let submission: { id: string } | null = null;
-  let subError: { message: string } | null = null;
-
-  if (user) {
-    const result = await supabase
-      .from("question_submissions")
-      .insert(insertPayload)
-      .select("id")
-      .single();
-    submission = result.data;
-    subError = result.error;
-  } else {
-    try {
-      const service = createServiceClient();
-      const result = await service
-        .from("question_submissions")
-        .insert(insertPayload)
-        .select("id")
-        .single();
-      submission = result.data;
-      subError = result.error;
-    } catch {
-      subError = { message: "Submit failed — service client unavailable" };
-    }
+  let service;
+  try {
+    service = createServiceClient();
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Database unavailable";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
+
+  const { data: submission, error: subError } = await service
+    .from("question_submissions")
+    .insert(insertPayload)
+    .select("id")
+    .single();
 
   if (subError || !submission) {
     return NextResponse.json({ error: subError?.message ?? "Submit failed" }, { status: 500 });
   }
 
-  const questionClient = user ? supabase : createServiceClient();
+  let insertedCount = 0;
+  const ingestWarnings: string[] = [];
 
   for (const q of body.extracted) {
-    const { data: row, error: qErr } = await questionClient
+    const { data: row, error: qErr } = await service
       .from("submitted_questions")
       .insert({
         submission_id: submission.id,
@@ -98,27 +87,54 @@ export async function POST(request: Request) {
       .select("id")
       .single();
 
-    if (qErr || !row) continue;
+    if (qErr || !row) {
+      ingestWarnings.push(qErr?.message ?? `Failed to save question: ${q.cleaned.slice(0, 40)}…`);
+      continue;
+    }
+
+    insertedCount++;
 
     const text = `${q.cleaned}\nTopic: ${q.topic}\nInstitution: ${q.inst}\nYear: ${q.year}\nTerm: ${q.term}\nMarks: ${q.marks}`;
-    await ingestDocument({
-      sourceType: "question",
-      sourceId: row.id,
-      userId: user?.id ?? null,
-      title: `${q.topic} — ${q.term} ${q.year}`,
-      text,
-      metadata: {
-        visibility: user ? "private" : "public",
-        institution: q.inst,
-        marks: q.marks,
-        submissionId: submission.id,
+    try {
+      const docId = await ingestDocument({
+        sourceType: "question",
+        sourceId: row.id,
+        userId: user?.id ?? null,
+        title: `${q.topic} — ${q.term} ${q.year}`,
+        text,
+        metadata: {
+          visibility: user ? "private" : "public",
+          institution: q.inst,
+          marks: q.marks,
+          submissionId: submission.id,
+        },
+      });
+      if (!docId) {
+        ingestWarnings.push(`Vector index skipped for question ${row.id}`);
+      }
+    } catch (e) {
+      ingestWarnings.push(
+        e instanceof Error ? e.message : `Vector index failed for question ${row.id}`
+      );
+    }
+  }
+
+  if (insertedCount === 0) {
+    await service.from("question_submissions").delete().eq("id", submission.id);
+    return NextResponse.json(
+      {
+        error: ingestWarnings[0] ?? "Failed to save any questions",
+        ingestWarnings,
       },
-    });
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({
     ok: true,
     submissionId: submission.id,
-    points: body.extracted.length * 5,
+    questionCount: insertedCount,
+    points: insertedCount * 5,
+    ingestWarnings: ingestWarnings.length ? ingestWarnings : undefined,
   });
 }

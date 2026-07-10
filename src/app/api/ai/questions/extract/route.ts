@@ -41,6 +41,8 @@ export async function POST(request: Request) {
   }
 
   const filePaths: string[] = [];
+  const warnings: string[] = [];
+
   if (user) {
     try {
       const service = createServiceClient();
@@ -50,16 +52,31 @@ export async function POST(request: Request) {
         const { error } = await service.storage
           .from("question-uploads")
           .upload(path, buffer, { contentType: file.type || "application/octet-stream", upsert: true });
-        if (!error) filePaths.push(path);
+        if (!error) {
+          filePaths.push(path);
+        } else {
+          warnings.push(`Could not store ${file.name}: ${error.message}`);
+        }
       }
     } catch {
-      /* bucket may not exist yet */
+      warnings.push("File storage unavailable — submission will proceed without scan copies");
     }
   }
 
   try {
     const extracted = await ocrFromFiles(files, { userId: user?.id });
-    return NextResponse.json({ extracted, filePaths });
+
+    if (extracted.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "No questions detected in the uploaded material. Try a clearer scan, a text-based PDF, or paste questions as a .txt file.",
+        },
+        { status: 422 }
+      );
+    }
+
+    return NextResponse.json({ extracted, filePaths, warnings: warnings.length ? warnings : undefined });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Extraction failed";
     return NextResponse.json({ error: message }, { status: 500 });

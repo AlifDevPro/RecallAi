@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { CONTRIBUTORS } from "@/lib/data/contributors";
+import { contributorAvatarUrl } from "@/lib/contributors/map-contributors";
 
 export async function GET(
   _request: Request,
@@ -18,7 +19,7 @@ export async function GET(
   if (row) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("display_name, email")
+      .select("display_name, email, avatar_url")
       .eq("id", userId)
       .single();
     return NextResponse.json({
@@ -30,7 +31,7 @@ export async function GET(
         verified: row.verified,
         inst: row.institution,
         tier: row.tier,
-        avatarUrl: `https://i.pravatar.cc/240?u=${row.id}`,
+        avatarUrl: contributorAvatarUrl(row.id, profile?.avatar_url),
       },
     });
   }

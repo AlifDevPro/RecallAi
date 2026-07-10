@@ -5,8 +5,10 @@ import { getReviewStats } from "@/lib/review/get-review-queue";
 import {
   buildActivityGrid,
   computeReviewStreak,
+  localDateKey,
   reviewEventsToDateKeys,
 } from "@/lib/review/streak";
+import type { WeeklyActivityDay } from "@/lib/data/dashboard";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export const MINUTES_PER_CARD = 0.7;
@@ -192,14 +194,45 @@ function buildForecastFromScheduling(
   return forecast;
 }
 
+function buildWeeklyActivity(reviews: ReviewEventRow[]): WeeklyActivityDay[] {
+  const byDay = new Map<string, number>();
+  for (const r of reviews) {
+    const d = new Date(r.reviewed_at);
+    const day = Number.isNaN(d.getTime()) ? r.reviewed_at.slice(0, 10) : localDateKey(d);
+    byDay.set(day, (byDay.get(day) ?? 0) + r.cards_reviewed);
+  }
+
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - (6 - i));
+    const key = localDateKey(d);
+    return {
+      day: `${WEEKDAYS[d.getDay()]} ${d.getDate()}`,
+      cards: byDay.get(key) ?? 0,
+    };
+  });
+}
+
 export async function getDashboardTopicsAndForecast(
   supabase: SupabaseClient,
   userId: string
-): Promise<{ topics: DashboardTopic[]; forecast: { day: string; count: number }[] }> {
-  const { topicList, cards, scheduling } = await loadTopicScheduling(supabase, userId);
+): Promise<{
+  topics: DashboardTopic[];
+  forecast: { day: string; count: number }[];
+  weeklyActivity: WeeklyActivityDay[];
+}> {
+  const { accountStart, accountCreatedAt } = await loadAccountContext(supabase, userId);
+  const [topicData, reviews] = await Promise.all([
+    loadTopicScheduling(supabase, userId),
+    loadRecentReviews(supabase, userId, accountCreatedAt, accountStart, 7),
+  ]);
+
+  const { topicList, cards, scheduling } = topicData;
   return {
     topics: buildDashboardTopics(topicList, cards, scheduling),
     forecast: buildForecastFromScheduling(scheduling),
+    weeklyActivity: buildWeeklyActivity(reviews),
   };
 }
 
@@ -291,17 +324,17 @@ export async function getDashboard(
   supabase: SupabaseClient,
   userId: string
 ): Promise<DashboardPayload> {
-  const [summary, topics, forecast, insight] = await Promise.all([
+  const [summary, decks, insight] = await Promise.all([
     getDashboardSummary(supabase, userId),
-    getDashboardTopics(supabase, userId),
-    getDashboardForecast(supabase, userId),
+    getDashboardTopicsAndForecast(supabase, userId),
     getDashboardInsight(supabase, userId),
   ]);
 
   return {
     displayName: summary.displayName,
-    topics,
-    forecast,
+    topics: decks.topics,
+    forecast: decks.forecast,
+    weeklyActivity: decks.weeklyActivity,
     activityGrid: summary.activityGrid,
     streakDays: summary.streakDays,
     insight,

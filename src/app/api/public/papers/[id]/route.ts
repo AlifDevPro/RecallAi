@@ -29,7 +29,13 @@ export async function GET(
   if (process.env.NODE_ENV === "development") {
     const fixture = getPaper(id);
     if (fixture) {
-      return NextResponse.json({ paper: fixture, source: "fixture" });
+      try {
+        const service = createServiceClient();
+        const resolved = await resolvePaperScanUrls(service, fixture);
+        return NextResponse.json({ paper: resolved, source: "fixture" });
+      } catch {
+        return NextResponse.json({ paper: fixture, source: "fixture" });
+      }
     }
   }
 
