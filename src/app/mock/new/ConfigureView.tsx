@@ -22,9 +22,10 @@ import { MobileNav } from "@/components/layout/MobileNav";
 import { AIButton } from "@/components/ui/AIButton";
 import { MockGeneratingSkeleton } from "@/components/mock/MockSkeletons";
 import { sectionTotal } from "@/lib/mock/validate-config";
+import { BD_MOCK_TOPICS, BD_UNIVERSITIES } from "@/lib/data/bd-institutions";
 
-const INSTITUTIONS = ["IIT Bombay", "IIT Delhi", "IIT Madras", "NIT Trichy", "BITS Pilani", "DU NCWEB", "Anna University"];
-const TOPICS = ["Algorithms", "DBMS", "Operating Systems", "Computer Networks", "Compilers", "Machine Learning", "System Design"];
+const INSTITUTIONS = [...BD_UNIVERSITIES];
+const TOPICS = [...BD_MOCK_TOPICS];
 const BLOOM = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"];
 
 type Modality = "text" | "voice" | "image";
@@ -48,8 +49,8 @@ async function readGenerateResponse(res: Response): Promise<GenerateMockResponse
 }
 
 function normalizeGenerateError(message: string) {
-  if (message.includes("correct_index") && message.includes("schema cache")) {
-    return "Mock generation hit an outdated database schema cache. Please try again.";
+  if (message.includes("correct_index") && (message.includes("schema cache") || message.includes("does not exist"))) {
+    return "Database needs migration 014_mock_correct_index_and_public_scans.sql — run it in Supabase SQL editor, then retry.";
   }
   return message;
 }

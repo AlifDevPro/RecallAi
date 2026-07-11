@@ -42,6 +42,10 @@ export async function POST(
     return NextResponse.json({ error: "Already graded" }, { status: 400 });
   }
 
+  if (attempt.status === "submitted") {
+    await supabase.from("mock_attempts").update({ status: "in_progress" }).eq("id", id);
+  }
+
   const body = await request.json().catch(() => ({}));
   const answers = (body.answers ?? []) as {
     questionId: string;
@@ -88,14 +92,6 @@ export async function POST(
     config.tab_switches = body.tabSwitches;
   }
 
-  const { error: submitError } = await supabase
-    .from("mock_attempts")
-    .update({ status: "submitted", config, submitted_at: new Date().toISOString() })
-    .eq("id", id);
-  if (submitError) {
-    return NextResponse.json({ error: submitError.message }, { status: 500 });
-  }
-
   let totalScore = 0;
   let maxScore = 0;
   try {
@@ -113,6 +109,8 @@ export async function POST(
       status: "graded",
       score: totalScore,
       max_score: maxScore,
+      submitted_at: new Date().toISOString(),
+      config,
     })
     .eq("id", id);
   if (gradeError) {

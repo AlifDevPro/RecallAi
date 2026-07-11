@@ -1,10 +1,51 @@
 import { NextResponse } from "next/server";
-import { nextScheduling, type ReviewRating } from "@/lib/srs/update-scheduling";
-import { RATING_INTERVAL_DAYS } from "@/lib/srs/format-interval";
+import {
+  nextScheduling,
+  parseSchedulingRow,
+  previewIntervalDays,
+  type ReviewRating,
+} from "@/lib/srs/update-scheduling";
 import { requireUser } from "@/lib/supabase/route-auth";
 import { ingestDocument } from "@/lib/vectors/ingest";
 
 const VALID_RATINGS: ReviewRating[] = ["again", "hard", "good", "easy"];
+
+const SCHEDULING_COLUMNS =
+  "mastery, due_at, easiness, interval_days, repetitions, lapse_count, last_reviewed_at";
+
+async function loadScheduling(
+  supabase: Awaited<ReturnType<typeof import("@/lib/supabase/server").createClient>>,
+  cardId: string,
+  userId: string
+) {
+  let { data: sched, error } = await supabase
+    .from("card_scheduling")
+    .select(SCHEDULING_COLUMNS)
+    .eq("card_id", cardId)
+    .eq("user_id", userId)
+    .single();
+
+  if (error?.message?.includes("easiness") || error?.message?.includes("repetitions")) {
+    const fallback = await supabase
+      .from("card_scheduling")
+      .select("mastery, due_at, last_reviewed_at")
+      .eq("card_id", cardId)
+      .eq("user_id", userId)
+      .single();
+    sched = fallback.data
+      ? {
+          ...fallback.data,
+          easiness: 2.5,
+          interval_days: 0,
+          repetitions: Number(fallback.data.mastery) > 0 ? 1 : 0,
+          lapse_count: 0,
+        }
+      : null;
+    error = fallback.error;
+  }
+
+  return { sched, error };
+}
 
 export async function POST(request: Request) {
   const auth = await requireUser();
@@ -26,27 +67,34 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data: sched, error: schedError } = await supabase
-    .from("card_scheduling")
-    .select("mastery, due_at")
-    .eq("card_id", cardId)
-    .eq("user_id", user.id)
-    .single();
+  const { sched, error: schedError } = await loadScheduling(supabase, cardId, user.id);
 
   if (schedError || !sched) {
     return NextResponse.json({ error: "Card not found" }, { status: 404 });
   }
 
-  const update = nextScheduling(rating, {
-    mastery: Number(sched.mastery),
-    due_at: sched.due_at,
-  });
+  const current = parseSchedulingRow(sched as Record<string, unknown>);
+  const update = nextScheduling(rating, current);
 
-  const { error: updateError } = await supabase
+  let { error: updateError } = await supabase
     .from("card_scheduling")
     .update(update)
     .eq("card_id", cardId)
     .eq("user_id", user.id);
+
+  if (updateError?.message?.includes("easiness") || updateError?.message?.includes("repetitions")) {
+    const legacy = await supabase
+      .from("card_scheduling")
+      .update({
+        mastery: update.mastery,
+        mastery_7d_ago: update.mastery_7d_ago,
+        due_at: update.due_at,
+        last_reviewed_at: update.last_reviewed_at,
+      })
+      .eq("card_id", cardId)
+      .eq("user_id", user.id);
+    updateError = legacy.error;
+  }
 
   if (updateError) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
@@ -75,8 +123,8 @@ export async function POST(request: Request) {
       title: card.front,
       text: `${card.front}\n${card.back}`,
       metadata: { visibility: "private" },
-    }).catch((error) => {
-      console.error("review ingest failed:", error);
+    }).catch((err) => {
+      console.error("review ingest failed:", err);
     });
   }
 
@@ -84,6 +132,14 @@ export async function POST(request: Request) {
     ok: true,
     nextDueAt: update.due_at,
     nextMastery: update.mastery,
-    intervalDays: RATING_INTERVAL_DAYS[rating],
+    intervalDays: update.interval_days,
+    repetitions: update.repetitions,
+    easiness: update.easiness,
+    previews: {
+      again: previewIntervalDays(current, "again"),
+      hard: previewIntervalDays(current, "hard"),
+      good: previewIntervalDays(current, "good"),
+      easy: previewIntervalDays(current, "easy"),
+    },
   });
 }

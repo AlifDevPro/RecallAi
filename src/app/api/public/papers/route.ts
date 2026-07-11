@@ -19,10 +19,17 @@ async function withCoverUrls(papers: Paper[]) {
       })
     );
   } catch {
-    return papers.map((paper) => ({
-      ...paper,
-      coverUrl: paper.scans[0]?.pageUrl ?? null,
-    }));
+    const { scanProxyUrl, normalizeStoragePath } = await import("@/lib/papers/scan-urls");
+    return papers.map((paper) => {
+      const raw = paper.scans[0]?.pageUrl;
+      const coverUrl =
+        raw && !raw.startsWith("http")
+          ? scanProxyUrl(normalizeStoragePath(raw))
+          : raw?.startsWith("http")
+            ? raw
+            : null;
+      return { ...paper, coverUrl };
+    });
   }
 }
 

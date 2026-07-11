@@ -21,7 +21,23 @@ export async function GET(
       mapped = await resolvePaperScanUrls(service, mapped);
       await service.rpc("increment_paper_views", { paper_id: id });
     } catch {
-      /* views/signing optional if service key missing locally */
+      const { resolvePaperScanUrls: resolveScans, scanProxyUrl, normalizeStoragePath } =
+        await import("@/lib/papers/scan-urls");
+      try {
+        const service = createServiceClient();
+        mapped = await resolveScans(service, mapped);
+      } catch {
+        mapped = {
+          ...mapped,
+          scans: mapped.scans.map((s) => ({
+            ...s,
+            pageUrl:
+              s.pageUrl && !s.pageUrl.startsWith("http")
+                ? scanProxyUrl(normalizeStoragePath(s.pageUrl))
+                : s.pageUrl,
+          })),
+        };
+      }
     }
     return NextResponse.json({ paper: mapped, source: "db" });
   }

@@ -50,9 +50,13 @@ export async function POST(request: Request) {
 
   try {
     const service = createServiceClient();
-    await service.storage
+    const { error: uploadError } = await service.storage
       .from("mock-uploads")
       .upload(path, Buffer.from(buffer), { contentType: image.type || "image/jpeg", upsert: true });
+
+    if (uploadError) {
+      return NextResponse.json({ error: uploadError.message }, { status: 500 });
+    }
 
     const { data: urlData } = service.storage.from("mock-uploads").getPublicUrl(path);
 

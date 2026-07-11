@@ -12,6 +12,7 @@ type DbPaper = {
   duration: string;
   total_marks: number;
   uploader: string;
+  uploader_id?: string | null;
   verified: boolean;
   views: number;
   has_digital: boolean;
@@ -32,7 +33,7 @@ export function mapDbPaper(row: DbPaper): Paper {
     examType: row.exam_type as ExamType,
     duration: row.duration,
     totalMarks: row.total_marks,
-    uploaderId: row.uploader,
+    uploaderId: row.uploader_id ?? "",
     uploaderName: row.uploader,
     verified: row.verified,
     views: row.views,

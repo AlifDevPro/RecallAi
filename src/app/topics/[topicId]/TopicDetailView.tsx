@@ -82,6 +82,9 @@ export function TopicDetailView() {
     queryFn: async () => {
       const r = await fetch(`/api/me/topics/${topicId}`);
       const d = (await r.json().catch(() => ({}))) as TopicPayload & { error?: string };
+      if (r.status === 401) {
+        throw new Error(d.error ?? "Session expired — please sign in again");
+      }
       if (r.status === 404) return { status: "not-found" as const };
       if (!r.ok) {
         throw new Error(d.error ?? "Failed to load topic");
@@ -174,7 +177,16 @@ export function TopicDetailView() {
           <div className="text-center px-6">
             <h1 className="text-xl font-semibold text-again">Could not load topic</h1>
             <p className="text-sm text-muted-foreground mt-2">{fetchError}</p>
-            <button type="button" onClick={() => void topicQuery.refetch()} className="mt-4 text-sm text-primary hover:underline">
+            {(fetchError.toLowerCase().includes("session") ||
+              fetchError.toLowerCase().includes("unauthorized")) && (
+              <Link
+                href={`/login?next=/topics/${encodeURIComponent(topicId)}`}
+                className="mt-3 inline-block text-sm text-primary hover:underline"
+              >
+                Sign in again
+              </Link>
+            )}
+            <button type="button" onClick={() => void topicQuery.refetch()} className="mt-4 block mx-auto text-sm text-primary hover:underline">
               Retry
             </button>
           </div>

@@ -28,6 +28,8 @@ export type MockConfig = {
   duration: number;
   paperId?: string;
   tab_switches?: number;
+  /** Persisted shuffled question ids so order survives refresh */
+  questionOrder?: string[];
 };
 
 const DEFAULT_RULES: MockRules = {
@@ -84,6 +86,9 @@ export function normalizeMockConfig(raw: unknown): MockConfig {
     duration: Math.max(15, Number(body.duration) || 60),
     paperId: typeof body.paperId === "string" ? body.paperId : undefined,
     tab_switches: Number(body.tab_switches) || 0,
+    questionOrder: Array.isArray(body.questionOrder)
+      ? body.questionOrder.map(String).filter(Boolean)
+      : undefined,
   };
 }
 

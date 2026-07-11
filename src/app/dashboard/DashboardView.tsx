@@ -110,6 +110,11 @@ export function DashboardView() {
     topics.length > 0 ? [...topics].sort((a, b) => a.mastery - b.mastery)[0] : null;
   const dueTopics = topics.filter((t) => t.due > 0);
   const isLoadingTop = summaryQuery.isLoading || decksQuery.isLoading;
+  const hasLoadError = summaryQuery.isError || decksQuery.isError;
+  const loadErrorMessage =
+    (summaryQuery.error as Error | undefined)?.message ??
+    (decksQuery.error as Error | undefined)?.message ??
+    "Failed to load dashboard";
 
   return (
     <div className="min-h-screen bg-background">
@@ -118,6 +123,20 @@ export function DashboardView() {
 
       <main className="lg:pl-64 pt-14 lg:pt-0 min-h-screen">
         <div className="max-w-6xl mx-auto px-6 py-8 lg:py-12">
+          {hasLoadError && (
+            <div className="mb-6 rounded-xl border border-again/30 bg-again/10 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-again">{loadErrorMessage}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+                }}
+                className="text-sm font-medium text-primary hover:underline"
+              >
+                Retry
+              </button>
+            </div>
+          )}
           <header className="mb-8">
             <p className="text-sm text-primary font-medium mb-1">
               {getGreeting()}, {summaryQuery.isLoading ? "…" : displayName}

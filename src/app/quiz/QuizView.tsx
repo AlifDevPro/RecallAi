@@ -106,8 +106,11 @@ function QuizViewInner() {
     queryKey: ["topics"],
     queryFn: async () => {
       const r = await fetch("/api/me/topics");
-      if (!r.ok) throw new Error("Failed to load topics");
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 401) {
+        throw new Error((d as { error?: string }).error ?? "Session expired — please sign in again");
+      }
+      if (!r.ok) throw new Error((d as { error?: string }).error ?? "Failed to load topics");
       return (d.topics ?? []) as TopicOption[];
     },
   });
@@ -245,11 +248,19 @@ function QuizViewInner() {
           <p className="text-muted-foreground mb-8">Test your understanding with AI-generated MCQs from your flashcards.</p>
 
           {topicsQuery.isError && (
-            <div className="mb-4 p-3 rounded-xl bg-again/10 border border-again/30 text-sm text-again flex justify-between gap-2">
+            <div className="mb-4 p-3 rounded-xl bg-again/10 border border-again/30 text-sm text-again flex flex-col sm:flex-row justify-between gap-2">
               <span>{topicsQuery.error.message}</span>
-              <button type="button" onClick={() => void topicsQuery.refetch()} className="text-primary hover:underline shrink-0">
-                Retry
-              </button>
+              <div className="flex items-center gap-3 shrink-0">
+                {topicsQuery.error.message.toLowerCase().includes("session") ||
+                topicsQuery.error.message.toLowerCase().includes("unauthorized") ? (
+                  <Link href="/login?next=/quiz" className="text-primary hover:underline">
+                    Sign in
+                  </Link>
+                ) : null}
+                <button type="button" onClick={() => void topicsQuery.refetch()} className="text-primary hover:underline">
+                  Retry
+                </button>
+              </div>
             </div>
           )}
 

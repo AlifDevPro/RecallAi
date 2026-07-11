@@ -55,7 +55,17 @@ export function AddTopicView() {
           const extractRes = await fetch("/api/ai/questions/extract", { method: "POST", body: form });
           const extractData = await extractRes.json();
           if (!extractRes.ok) throw new Error(extractData.error ?? "Extraction failed");
-          sourceText = extractData.extracted ?? "";
+          const extracted = extractData.extracted;
+          if (Array.isArray(extracted) && extracted.length > 0) {
+            sourceText = extracted
+              .map((q: { cleaned?: string; question?: string }) => q.cleaned ?? q.question ?? "")
+              .filter(Boolean)
+              .join("\n\n");
+          } else if (typeof extractData.raw === "string") {
+            sourceText = extractData.raw;
+          } else {
+            throw new Error("No text could be extracted from the upload");
+          }
         } else if (uploadText.trim()) {
           sourceText = uploadText.trim();
         } else {

@@ -48,12 +48,7 @@ function parseCorrectIndex(choices: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
-function isMissingCorrectIndexColumn(error: { code?: string; message?: string } | null) {
-  return (
-    error?.code === "PGRST204" ||
-    (error?.message?.includes("correct_index") && error.message.includes("schema cache"))
-  );
-}
+import { isMissingCorrectIndexColumn } from "@/lib/mock/schema-compat";
 
 function isMissingAnswerMetadataColumn(error: { code?: string; message?: string } | null) {
   return (
@@ -182,7 +177,7 @@ function gradeMcq(
   if (idx >= 0 && correctIndex != null) {
     const penalty = negativeMarking ? marks * 0.25 : 0;
     return {
-      score: Math.max(0, -penalty),
+      score: negativeMarking ? -penalty : 0,
       feedback: `Incorrect. The correct option was ${String.fromCharCode(65 + correctIndex)}.`,
       modelAnswer: correct ?? "",
     };
@@ -241,13 +236,15 @@ export async function gradeMockAttempt(
     .eq("attempt_id", attemptId)
     .order("sort_order");
 
+  let questionRows: QuestionRow[] = (questions ?? []) as QuestionRow[];
+
   if (isMissingCorrectIndexColumn(questionsError)) {
     const fallback = await supabase
       .from("mock_questions")
       .select("id, body, marks, section, choices")
       .eq("attempt_id", attemptId)
       .order("sort_order");
-    questions = fallback.data;
+    questionRows = (fallback.data ?? []) as QuestionRow[];
     questionsError = fallback.error;
   }
 
@@ -260,12 +257,20 @@ export async function gradeMockAttempt(
     .select("question_id, answer_text, answer_audio_url, answer_image_url, answer_modality")
     .eq("attempt_id", attemptId);
 
+  let answerRows: AnswerRow[] = (answers ?? []) as AnswerRow[];
+
   if (isMissingAnswerMetadataColumn(answersError)) {
     const fallback = await supabase
       .from("mock_answers")
       .select("question_id, answer_text, answer_image_path")
       .eq("attempt_id", attemptId);
-    answers = fallback.data;
+    answerRows = ((fallback.data ?? []) as { question_id: string; answer_text: string | null; answer_image_path: string | null }[]).map(
+      (a) => ({
+        question_id: a.question_id,
+        answer_text: a.answer_text,
+        answer_image_path: a.answer_image_path,
+      })
+    );
     answersError = fallback.error;
   }
 
@@ -273,12 +278,12 @@ export async function gradeMockAttempt(
     throw new Error(answersError.message);
   }
 
-  const answerMap = new Map((answers ?? []).map((a) => [a.question_id, a as AnswerRow]));
+  const answerMap = new Map(answerRows.map((a) => [a.question_id, a as AnswerRow]));
 
   let totalScore = 0;
   let maxScore = 0;
 
-  for (const q of (questions ?? []) as QuestionRow[]) {
+  for (const q of questionRows) {
     maxScore += q.marks;
     const answer = answerMap.get(q.id);
     const { text: answerText, modality } = answer
@@ -333,7 +338,7 @@ export async function gradeMockAttempt(
     });
   }
 
-  return { totalScore, maxScore };
+  return { totalScore: Math.max(0, totalScore), maxScore };
 }
 
 export function parseGradeFeedback(raw: string | null): {

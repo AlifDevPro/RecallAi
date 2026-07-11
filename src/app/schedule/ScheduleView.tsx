@@ -48,6 +48,10 @@ import {
   normalizeTime,
   validateScheduleBlocks,
 } from "@/lib/schedule/validate-blocks";
+import {
+  formatSrsBlockDisplay,
+  parseSrsBlockDetail,
+} from "@/lib/schedule/build-srs-blocks";
 
 const kindMeta: Record<
   BlockKind,
@@ -191,7 +195,42 @@ export function ScheduleView() {
   const [filter, setFilter] = useState<BlockKind | "all">("all");
   const [editing, setEditing] = useState<ScheduleBlock | null>(null);
   const [creating, setCreating] = useState(false);
+  const [srsSyncing, setSrsSyncing] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const srsSyncedWeek = useRef<number | null>(null);
+
+  const syncSrsSchedule = useCallback(
+    async (silent = true) => {
+      setSrsSyncing(true);
+      try {
+        const res = await fetch("/api/me/schedule/sync-srs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ weekOffset }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          if (!silent) throw new Error((d as { error?: string }).error ?? "SRS sync failed");
+          return;
+        }
+        srsSyncedWeek.current = weekOffset;
+        await queryClient.invalidateQueries({ queryKey: ["schedule"] });
+        await queryClient.invalidateQueries({ queryKey: ["schedule-summary"] });
+      } catch (e) {
+        if (!silent) {
+          setAiError(e instanceof Error ? e.message : "SRS sync failed");
+        }
+      } finally {
+        setSrsSyncing(false);
+      }
+    },
+    [weekOffset, queryClient]
+  );
+
+  useEffect(() => {
+    if (srsSyncedWeek.current === weekOffset) return;
+    void syncSrsSchedule(true);
+  }, [weekOffset, syncSrsSchedule]);
 
   const weekDates = useMemo(() => getWeekDates(weekOffset), [weekOffset]);
 
@@ -470,6 +509,20 @@ export function ScheduleView() {
               )}
             </div>
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void syncSrsSchedule(false)}
+                disabled={srsSyncing || aiRegenerating}
+                className="inline-flex items-center gap-2 h-11 px-5 rounded-xl bg-surface-raised hover:bg-surface text-sm font-semibold transition-colors disabled:opacity-50"
+                title="Refresh review and learn blocks from SM-2 forecast"
+              >
+                {srsSyncing ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                Sync SRS
+              </button>
               <button
                 type="button"
                 onClick={clearCompleted}
@@ -841,6 +894,11 @@ function BlockRow({
 }) {
   const meta = kindMeta[block.kind];
   const Icon = meta.icon;
+  const srsMeta = parseSrsBlockDetail(block.detail);
+  const sessionHref =
+    srsMeta?.href ??
+    (block.kind === "learn" ? "/review?mode=preview" : "/review");
+  const detailText = srsMeta ? formatSrsBlockDisplay(srsMeta) : block.detail;
   return (
     <div
       className={`group relative flex gap-4 rounded-2xl bg-surface-dim hover:bg-surface-dim/70 p-4 lg:p-5 transition-colors ${
@@ -868,17 +926,18 @@ function BlockRow({
               <Sparkles className="size-2.5" /> AI
             </span>
           )}
-          {block.kind === "review" && !block.done && (
+          {(block.kind === "review" || block.kind === "learn") && !block.done && (
             <Link
-              href="/review"
+              href={sessionHref}
               className="inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"
             >
-              Start review <ArrowRight className="size-2.5" />
+              {block.kind === "learn" ? "Start learning" : "Start review"}{" "}
+              <ArrowRight className="size-2.5" />
             </Link>
           )}
         </div>
         <h3 className="text-lg lg:text-xl font-semibold tracking-tight leading-snug">{block.title}</h3>
-        {block.detail && <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{block.detail}</p>}
+        {detailText && <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{detailText}</p>}
       </div>
 
       <div className="flex items-start gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

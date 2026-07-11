@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "@/lib/supabase/route-auth";
 import { ingestDocument } from "@/lib/vectors/ingest";
+import {
+  buildSchedulingInsert,
+  dueAtForNewCard,
+  insertCardScheduling,
+} from "@/lib/srs/introduce-cards";
 import { validateCardFields } from "@/lib/topics/validate-topic";
 
 async function getTopicId(
@@ -51,12 +56,8 @@ export async function POST(
     return NextResponse.json({ error: error?.message ?? "Failed" }, { status: 500 });
   }
 
-  await supabase.from("card_scheduling").insert({
-    card_id: card.id,
-    user_id: user.id,
-    due_at: new Date().toISOString(),
-    mastery: 0,
-  });
+  const dueAt = await dueAtForNewCard(supabase, user.id);
+  await insertCardScheduling(supabase, buildSchedulingInsert(card.id, user.id, dueAt));
 
   await ingestDocument({
     sourceType: "card",

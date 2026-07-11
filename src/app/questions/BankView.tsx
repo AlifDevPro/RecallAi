@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { FilterDropdown } from "@/components/ui/FilterDropdown";
 import { PublicHeader } from "@/components/layout/PublicHeader";
+import { ScanPreview } from "@/components/papers/ScanPreview";
 import type { PaperListItem } from "@/lib/data/question-papers";
 import type { PaperFacets } from "@/lib/papers/query-papers";
 import { paperListParamsToSearchParams } from "@/lib/papers/query-papers";
@@ -420,7 +421,7 @@ function PaperCard({ p }: { p: PaperListItem }) {
   return (
     <Link href={`/questions/${p.id}`} className="group rounded-md border border-border bg-surface overflow-hidden hover:border-primary/50 transition-colors flex flex-col">
       <div className="aspect-[4/3] bg-surface-raised border-b border-border overflow-hidden">
-        <ScanCover src={cover} alt={`${p.course} scan`} />
+        <ScanPreview src={cover} alt={`${p.course} scan`} variant="cover" className="w-full h-full min-h-[180px]" />
       </div>
       <div className="p-4 flex flex-col flex-1">
       <div className="flex items-start justify-between gap-2">
@@ -454,42 +455,6 @@ function PaperCard({ p }: { p: PaperListItem }) {
       </div>
       </div>
     </Link>
-  );
-}
-
-function ScanCover({ src, alt }: { src: string | null; alt: string }) {
-  const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
-
-  if (!src || failed) {
-    return (
-      <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
-        <ImageIcon className="size-8 opacity-40" />
-        <span className="text-[11px]">Scan preview unavailable</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative w-full h-full">
-      {!loaded && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground animate-pulse">
-          <ImageIcon className="size-8 opacity-30" />
-        </div>
-      )}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={src}
-        alt={alt}
-        loading="lazy"
-        decoding="async"
-        onLoad={() => setLoaded(true)}
-        onError={() => setFailed(true)}
-        className={`w-full h-full object-cover object-top transition-opacity duration-300 group-hover:scale-[1.02] ${
-          loaded ? "opacity-100" : "opacity-0"
-        }`}
-      />
-    </div>
   );
 }
 

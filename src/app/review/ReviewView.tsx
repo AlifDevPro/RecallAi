@@ -157,8 +157,14 @@ function ReviewViewInner() {
   const invalidateAfterReview = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     void queryClient.invalidateQueries({ queryKey: ["schedule-summary"] });
+    void queryClient.invalidateQueries({ queryKey: ["schedule"] });
     void queryClient.invalidateQueries({ queryKey: ["review-stats"] });
     void queryClient.invalidateQueries({ queryKey: ["topics"] });
+    void fetch("/api/me/schedule/sync-srs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ weekOffset: 0 }),
+    }).catch(() => {});
   }, [queryClient]);
 
   const startSession = async (mode: "due" | "preview") => {
@@ -277,10 +283,20 @@ function ReviewViewInner() {
   }, [step, flipped, ratingInFlight, index, cards]);
 
   const card = cards[index];
+  const srsState = useMemo(() => {
+    if (!card) return null;
+    return {
+      easiness: card.srs?.easiness ?? 2.5,
+      interval_days: card.srs?.interval_days ?? 0,
+      repetitions: card.srs?.repetitions ?? 0,
+      lapse_count: card.srs?.lapse_count ?? 0,
+      mastery: card.mastery,
+      due_at: card.dueAt,
+    };
+  }, [card]);
   const progress = cards.length ? ((index + (flipped ? 1 : 0)) / cards.length) * 100 : 0;
   const totalDue = statsQuery.data?.totalDue ?? 0;
-  const hasTopicFilter = topicFilter.trim().length > 0;
-  const displayDue = totalDue > 0 ? totalDue : hasTopicFilter ? 1 : 0;
+  const displayDue = totalDue;
   const startMode: "due" | "preview" = totalDue > 0 ? "due" : "preview";
   const estimatedMinutes = Math.max(
     1,
@@ -295,6 +311,21 @@ function ReviewViewInner() {
       <main className="lg:pl-64 pt-14 lg:pt-0 min-h-screen">{content}</main>
     </div>
   );
+
+  if (statsQuery.isError && step === "setup") {
+    return layout(
+      <div className="max-w-xl mx-auto px-6 py-16 text-center">
+        <p className="text-again font-medium">Could not load review stats.</p>
+        <button
+          type="button"
+          onClick={() => void statsQuery.refetch()}
+          className="mt-4 text-sm text-primary hover:underline"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   if (statsQuery.isLoading && step === "setup") {
     return layout(<SetupSkeleton />);
@@ -681,7 +712,7 @@ function ReviewViewInner() {
                 <>
                   <span className="font-semibold text-sm">{btn.label}</span>
                   <span className="text-xs opacity-70">
-                    {intervalLabelForRating(btn.key)} · {i + 1}
+                    {intervalLabelForRating(btn.key, srsState)} · {i + 1}
                   </span>
                 </>
               )}

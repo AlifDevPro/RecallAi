@@ -23,6 +23,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { MobileNav } from "@/components/layout/MobileNav";
 import { AIButton } from "@/components/ui/AIButton";
 import { ResultSkeleton } from "@/components/mock/MockSkeletons";
+import { QuestionBody } from "@/components/mock/QuestionBody";
 
 type ResultData = {
   score: number;
@@ -301,8 +302,8 @@ function QuestionRow({ q, idx }: { q: QData; idx: number }) {
         <div className={`size-9 rounded-lg flex items-center justify-center ${statusTone.bg}`}>
           <statusTone.icon className={`size-4 ${statusTone.color}`} />
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold truncate">Q{idx + 1}. {q.body}</div>
+        <div className="flex-1 min-w-0 pr-2">
+          <div className="text-sm font-semibold line-clamp-2">Q{idx + 1}. {q.body}</div>
           <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2">
             <span className="inline-flex items-center gap-1"><ModalityIcon className="size-3" /> {q.modality}</span>
             <span>·</span>
@@ -315,14 +316,20 @@ function QuestionRow({ q, idx }: { q: QData; idx: number }) {
         <ChevronDown className={`size-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="px-4 pb-5 pt-1 grid md:grid-cols-2 gap-4">
-          <div className="rounded-lg border border-border/40 bg-surface-raised/40 p-3">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Your answer</div>
-            <div className="text-sm text-foreground/90 whitespace-pre-wrap">{q.your}</div>
+        <div className="px-4 pb-5 pt-1 space-y-4">
+          <div className="rounded-xl border border-border/40 bg-surface-raised/20 p-4">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Question</div>
+            <QuestionBody text={q.body} />
           </div>
-          <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-primary mb-1">Model answer</div>
-            <div className="text-sm text-foreground/90">{q.model}</div>
+          <div className="grid md:grid-cols-2 gap-4">
+          <div className="rounded-lg border border-border/40 bg-surface-raised/40 p-4">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Your answer</div>
+            <QuestionBody text={q.your || "(no answer submitted)"} className="text-sm text-foreground/90" />
+          </div>
+          <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-primary mb-2">Model answer</div>
+            <QuestionBody text={q.model || "—"} className="text-sm text-foreground/90" />
+          </div>
           </div>
           {q.deductions.length > 0 && (
             <div className="md:col-span-2 rounded-lg border border-border/40 p-3">

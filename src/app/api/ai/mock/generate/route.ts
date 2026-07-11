@@ -5,13 +5,8 @@ import { isGroqConfigured } from "@/lib/ai/config";
 import { checkRateLimit } from "@/lib/ai/rate-limit";
 import { searchContent, formatRagContext } from "@/lib/vectors/search";
 import { validateMockConfig, sectionTotal } from "@/lib/mock/validate-config";
+import { isMissingCorrectIndexColumn } from "@/lib/mock/schema-compat";
 
-function isMissingCorrectIndexColumn(error: { code?: string; message?: string } | null) {
-  return (
-    error?.code === "PGRST204" ||
-    (error?.message?.includes("correct_index") && error.message.includes("schema cache"))
-  );
-}
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -114,6 +109,14 @@ For MCQ questions include exactly 4 choices and correctIndex (0-based).`,
       return NextResponse.json({ error: "No questions were generated" }, { status: 422 });
     }
 
+    if (questions.length < questionCount) {
+      console.warn(
+        `Mock generate: expected ${questionCount} questions, got ${questions.length}`
+      );
+    }
+
+    const configWithOrder = { ...config, questionOrder: undefined as string[] | undefined };
+
     const { data: attempt, error: attemptError } = await supabase
       .from("mock_attempts")
       .insert({
@@ -121,7 +124,7 @@ For MCQ questions include exactly 4 choices and correctIndex (0-based).`,
         title: parsed.title ?? `Mock — ${topics[0] ?? "General"}`,
         topics,
         duration_min: config.duration,
-        config,
+        config: configWithOrder,
       })
       .select("id")
       .single();

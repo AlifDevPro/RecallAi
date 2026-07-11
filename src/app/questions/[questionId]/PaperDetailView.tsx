@@ -22,44 +22,8 @@ import {
 } from "lucide-react";
 import { AIButton } from "@/components/ui/AIButton";
 import { PublicHeader } from "@/components/layout/PublicHeader";
+import { ScanPreview } from "@/components/papers/ScanPreview";
 import type { Paper } from "@/lib/data/question-papers";
-
-function ScanImage({
-  src,
-  alt,
-  className,
-  style,
-}: {
-  src: string;
-  alt: string;
-  className?: string;
-  style?: React.CSSProperties;
-}) {
-  const [failed, setFailed] = useState(false);
-
-  if (!src || failed) {
-    return (
-      <div
-        className={`flex flex-col items-center justify-center gap-2 bg-surface-raised text-muted-foreground ${className ?? ""}`}
-        style={style}
-      >
-        <ImageIcon className="size-8 opacity-50" />
-        <span className="text-xs">Scan preview unavailable</span>
-      </div>
-    );
-  }
-
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt={alt}
-      className={className}
-      style={style}
-      onError={() => setFailed(true)}
-    />
-  );
-}
 
 export function PaperDetailView() {
   const params = useParams<{ questionId: string }>();
@@ -68,21 +32,37 @@ export function PaperDetailView() {
   const [paper, setPaper] = useState<Paper | null>(null);
   const [related, setRelated] = useState<Paper[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
+    setFetchError(null);
     Promise.all([
-      fetch(`/api/public/papers/${questionId}`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/public/papers/${questionId}`).then(async (r) => {
+        if (r.status === 404) return { notFound: true as const };
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error((d as { error?: string }).error ?? `Failed to load (${r.status})`);
+        }
+        return r.json();
+      }),
       fetch(`/api/public/papers/${questionId}/related`).then((r) => (r.ok ? r.json() : { papers: [] })),
     ])
       .then(([detail, rel]) => {
-        if (detail?.paper) setPaper(detail.paper);
-        else setPaper(null);
+        if (detail && "notFound" in detail) {
+          setPaper(null);
+          setFetchError(null);
+        } else if (detail?.paper) {
+          setPaper(detail.paper);
+        } else {
+          setPaper(null);
+        }
         setRelated(rel?.papers ?? []);
       })
-      .catch(() => {
+      .catch((e) => {
         setPaper(null);
         setRelated([]);
+        setFetchError(e instanceof Error ? e.message : "Failed to load paper");
       })
       .finally(() => setLoading(false));
   }, [questionId]);
@@ -92,6 +72,21 @@ export function PaperDetailView() {
       <div className="min-h-screen bg-background">
         <PublicHeader />
         <div className="max-w-2xl mx-auto p-10 text-center text-muted-foreground">Loading paper…</div>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="min-h-screen bg-background">
+        <PublicHeader />
+        <div className="max-w-2xl mx-auto p-10 text-center">
+          <h1 className="text-xl font-semibold text-again">Could not load paper</h1>
+          <p className="mt-2 text-sm text-muted-foreground">{fetchError}</p>
+          <Link href="/questions" className="mt-4 inline-block text-sm text-primary hover:underline">
+            ← Back to question bank
+          </Link>
+        </div>
       </div>
     );
   }
@@ -114,7 +109,10 @@ export function PaperDetailView() {
   const downloadOriginal = () => {
     const url = paper.scans[0]?.pageUrl;
     if (!url) return;
-    window.open(url, "_blank", "noopener,noreferrer");
+    const downloadUrl = url.startsWith("/api/public/papers/scan")
+      ? `${url}${url.includes("?") ? "&" : "?"}download=1`
+      : url;
+    window.open(downloadUrl, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -179,17 +177,31 @@ export function PaperDetailView() {
           <aside className="space-y-4">
             <div className="rounded-md border border-border bg-surface p-4">
               <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Uploaded by</div>
-              <Link href={`/contributors/${paper.uploaderId}`} className="flex items-center gap-3 hover:opacity-80">
-                <div className="size-10 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-xs font-bold text-primary-foreground">
-                  {paper.uploaderName.split(" ").map((n) => n[0]).slice(0, 2).join("")}
-                </div>
-                <div>
-                  <div className="text-sm font-semibold">{paper.uploaderName}</div>
-                  <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
-                    <Eye className="size-3" /> {paper.views} views
+              {paper.uploaderId && /^[0-9a-f-]{36}$/i.test(paper.uploaderId) ? (
+                <Link href={`/contributors/${paper.uploaderId}`} className="flex items-center gap-3 hover:opacity-80">
+                  <div className="size-10 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-xs font-bold text-primary-foreground">
+                    {paper.uploaderName.split(" ").map((n) => n[0]).slice(0, 2).join("")}
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold">{paper.uploaderName}</div>
+                    <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+                      <Eye className="size-3" /> {paper.views} views
+                    </div>
+                  </div>
+                </Link>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-surface-raised flex items-center justify-center text-xs font-bold text-muted-foreground">
+                    {paper.uploaderName.split(" ").map((n) => n[0]).slice(0, 2).join("") || "?"}
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold">{paper.uploaderName || "Community"}</div>
+                    <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+                      <Eye className="size-3" /> {paper.views} views
+                    </div>
                   </div>
                 </div>
-              </Link>
+              )}
             </div>
 
             <div className="rounded-md border border-border bg-surface p-4">
@@ -280,16 +292,22 @@ function PhotoView({ paper }: { paper: Paper }) {
               onClick={() => setPage(i)}
               className={`block w-full overflow-hidden rounded border-2 ${i === page ? "border-primary" : "border-border hover:border-muted-foreground"}`}
             >
-              <ScanImage src={s.pageUrl} alt={`Page ${i + 1} thumbnail`} className="w-full h-auto block opacity-90 min-h-[60px]" />
+              <ScanPreview
+                src={s.pageUrl}
+                alt={`Page ${i + 1} thumbnail`}
+                variant="thumb"
+                className="w-full min-h-[60px] opacity-90"
+              />
             </button>
           ))}
         </div>
-        <div className="overflow-auto p-4 bg-surface-dim max-h-[700px] flex items-start justify-center">
-          <ScanImage
+        <div className="overflow-auto p-4 bg-surface-dim max-h-[700px] flex items-start justify-center min-h-[480px]">
+          <ScanPreview
             src={cur.pageUrl}
             alt={`Page ${page + 1}`}
+            variant="inline"
             style={{ transform: `scale(${zoom})`, transformOrigin: "top center", transition: "transform 200ms" }}
-            className="max-w-full h-auto rounded shadow-lg border border-border"
+            className="w-full min-h-[460px] max-w-full rounded shadow-lg border border-border"
           />
         </div>
       </div>

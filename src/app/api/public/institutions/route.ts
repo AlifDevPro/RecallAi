@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { UNIVERSITIES } from "@/lib/data/question-papers.fixtures";
+import { BD_UNIVERSITIES } from "@/lib/data/bd-institutions";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -13,12 +13,14 @@ export async function GET(request: Request) {
 
   const { data: rows } = await query;
 
+  let institutions = [...BD_UNIVERSITIES];
   if (rows && rows.length > 0) {
-    const institutions = rows.map((r) => r.name);
+    const fromDb = rows.map((r) => r.name);
+    institutions = Array.from(new Set([...fromDb, ...BD_UNIVERSITIES])).sort();
+    if (q) institutions = institutions.filter((n) => n.toLowerCase().includes(q));
     return NextResponse.json({ institutions });
   }
 
-  let institutions = UNIVERSITIES;
   if (q) institutions = institutions.filter((n) => n.toLowerCase().includes(q));
   return NextResponse.json({ institutions });
 }

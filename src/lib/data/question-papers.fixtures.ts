@@ -1,30 +1,9 @@
 import type { DigitalSection, ExamType, Paper, ScanPage } from "./question-papers";
+import { BD_UNIVERSITIES, BD_DEPARTMENTS } from "./bd-institutions";
 
-export const UNIVERSITIES = [
-  "IIT Bombay",
-  "IIT Delhi",
-  "IIT Madras",
-  "NIT Trichy",
-  "BITS Pilani",
-  "IIIT Hyderabad",
-  "Anna University",
-  "DTU",
-  "Jadavpur University",
-  "VIT",
-];
+export const UNIVERSITIES = [...BD_UNIVERSITIES];
 
-export const DEPARTMENTS: Record<string, string[]> = {
-  "IIT Bombay": ["Computer Science", "Electrical", "Mechanical", "Chemical"],
-  "IIT Delhi": ["Computer Science", "Electrical", "Civil"],
-  "IIT Madras": ["Computer Science", "Aerospace", "Mechanical"],
-  "NIT Trichy": ["Computer Science", "ECE", "Mechanical"],
-  "BITS Pilani": ["Computer Science", "ECE", "Pharmacy"],
-  "IIIT Hyderabad": ["Computer Science", "ECE"],
-  "Anna University": ["Computer Science", "ECE", "Civil"],
-  DTU: ["Computer Science", "Mechanical"],
-  "Jadavpur University": ["Computer Science", "Chemical"],
-  VIT: ["Computer Science", "ECE"],
-};
+export const DEPARTMENTS: Record<string, string[]> = { ...BD_DEPARTMENTS };
 
 export const ALL_DEPARTMENTS = Array.from(new Set(Object.values(DEPARTMENTS).flat())).sort();
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExamSkeleton } from "@/components/mock/MockSkeletons";
+import { QuestionBody } from "@/components/mock/QuestionBody";
 import type { MockConfig } from "@/lib/mock/validate-config";
 import { normalizeMockConfig } from "@/lib/mock/validate-config";
 import {
@@ -20,7 +21,6 @@ import {
   Clock,
   Sun,
   Square,
-  Play,
   Upload,
   Trash2,
 } from "lucide-react";
@@ -66,6 +66,31 @@ function parseChoices(raw: unknown): string[] | undefined {
   return undefined;
 }
 
+function mapServerAnswer(raw: Record<string, unknown>): Answer {
+  const audioUrl = (raw.answer_audio_url as string) || undefined;
+  const imageUrl = (raw.answer_image_url as string) || undefined;
+  return {
+    modality: (raw.answer_modality as Modality) ?? (audioUrl ? "voice" : imageUrl ? "image" : "text"),
+    text: (raw.answer_text as string) || undefined,
+    audioUrl,
+    images: imageUrl ? [imageUrl] : undefined,
+    voiceDur: audioUrl ? 1 : 0,
+  };
+}
+
+function orderQuestions<T extends { id: string }>(
+  items: T[],
+  order: string[] | undefined,
+  shuffle: boolean
+): T[] {
+  if (order?.length === items.length) {
+    const byId = new Map(items.map((q) => [q.id, q]));
+    const ordered = order.map((id) => byId.get(id)).filter(Boolean) as T[];
+    if (ordered.length === items.length) return ordered;
+  }
+  return shuffle ? shuffleQuestions(items) : items;
+}
+
 export function ExamRuntimeView() {
   const params = useParams<{ attemptId: string }>();
   const attemptId = params.attemptId;
@@ -86,6 +111,9 @@ export function ExamRuntimeView() {
   const [navOpen, setNavOpen] = useState(false);
   const [highContrast, setHighContrast] = useState(false);
   const [gradingProgress, setGradingProgress] = useState(0);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const autoSubmitRef = useRef(false);
+  const orderPersistedRef = useRef(false);
 
   const loadAttempt = useCallback(async () => {
     setExamState("loading");
@@ -98,66 +126,87 @@ export function ExamRuntimeView() {
         setExamState("error");
         return;
       }
-      if (d.attempt?.status === "graded") {
+      if (d.attempt?.status === "graded" || d.attempt?.status === "submitted") {
         router.replace(`/mock/result/${attemptId}`);
         return;
       }
       const config = normalizeMockConfig(d.attempt?.config ?? {});
       setExamConfig(config);
-      let qs = (d.questions ?? []).map(
-        (q: { id: string; body: string; marks: number; topic: string; section: string; choices?: unknown }) => ({
+      const rawQs = (d.questions ?? []).map(
+        (q: {
+          id: string;
+          body: string;
+          marks: number;
+          topic: string;
+          section: string;
+          choices?: unknown;
+          answer?: Record<string, unknown>;
+        }) => ({
           id: q.id,
           section: q.section ?? "Short",
           marks: q.marks,
           body: q.body,
           choices: parseChoices(q.choices),
-          bloom: "Apply",
+          bloom: q.topic || "Apply",
           year: new Date().getFullYear(),
         })
       );
-      if (qs.length === 0) {
+      if (rawQs.length === 0) {
         setExamState("empty");
         return;
       }
-      if (config.rules.shuffle) {
-        qs = shuffleQuestions(qs);
+
+      const qs = orderQuestions(rawQs, config.questionOrder, config.rules.shuffle) as ExamQuestion[];
+      if (config.rules.shuffle && !config.questionOrder?.length && !orderPersistedRef.current) {
+        orderPersistedRef.current = true;
+        void fetch(`/api/mock/attempts/${attemptId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ questionOrder: qs.map((q) => q.id) }),
+        });
       }
+
+      const serverAnswers: Record<string, Answer> = {};
+      for (const q of d.questions ?? []) {
+        if (q.answer && typeof q.answer === "object") {
+          serverAnswers[q.id] = mapServerAnswer(q.answer as Record<string, unknown>);
+        }
+      }
+
+      let restoredAnswers = { ...serverAnswers };
+      let restoredCurrent = 0;
+      let restoredSeconds = d.attempt?.durationMin ? d.attempt.durationMin * 60 : 90 * 60;
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (raw) {
+          const s = JSON.parse(raw);
+          if (s.answers) restoredAnswers = { ...serverAnswers, ...s.answers };
+          if (typeof s.current === "number") restoredCurrent = s.current;
+          if (typeof s.secondsLeft === "number") {
+            const elapsed = Math.floor((Date.now() - (s.savedAt ?? Date.now())) / 1000);
+            restoredSeconds = Math.max(0, s.secondsLeft - elapsed);
+          }
+        }
+      } catch {
+        /* noop */
+      }
+
       setQuestions(qs);
+      setAnswers(restoredAnswers);
+      setCurrent(Math.min(restoredCurrent, qs.length - 1));
+      setSecondsLeft(restoredSeconds);
       if (d.attempt?.title) setAttemptTitle(d.attempt.title);
-      if (d.attempt?.durationMin) setSecondsLeft(d.attempt.durationMin * 60);
       setExamState("ready");
     } catch {
       setLoadError("Failed to load exam");
       setExamState("error");
     }
-  }, [attemptId, router]);
+  }, [attemptId, router, storageKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadAttempt(), 0);
     return () => window.clearTimeout(timer);
   }, [loadAttempt]);
-
-  // Persistence
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      try {
-        const raw = localStorage.getItem(storageKey);
-        if (raw) {
-          const s = JSON.parse(raw);
-          if (s.answers) setAnswers(s.answers);
-          if (typeof s.secondsLeft === "number") {
-            const elapsed = Math.floor((Date.now() - s.savedAt) / 1000);
-            setSecondsLeft(Math.max(0, s.secondsLeft - elapsed));
-          }
-          if (typeof s.current === "number") setCurrent(s.current);
-        }
-      } catch {/* noop */}
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (examState !== "ready") return;
@@ -166,13 +215,14 @@ export function ExamRuntimeView() {
   }, [examState]);
 
   useEffect(() => {
-    if (examState === "ready" && secondsLeft === 0 && !confirmSubmit) {
-      const timer = window.setTimeout(() => setConfirmSubmit(true), 0);
-      return () => window.clearTimeout(timer);
-    }
-  }, [secondsLeft, examState, confirmSubmit]);
+    if (examState !== "ready" || secondsLeft > 0) return;
+    if (autoSubmitRef.current) return;
+    autoSubmitRef.current = true;
+    setConfirmSubmit(true);
+  }, [secondsLeft, examState]);
 
   useEffect(() => {
+    if (examState !== "ready") return;
     localStorage.setItem(storageKey, JSON.stringify({ answers, current, secondsLeft, savedAt: Date.now() }));
     if (!questions.length) return;
     const t = setTimeout(() => {
@@ -191,16 +241,25 @@ export function ExamRuntimeView() {
             answerModality: a?.modality,
           };
         });
-      if (payload.length) {
-        fetch(`/api/mock/attempts/${attemptId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ answers: payload }),
+      if (!payload.length) return;
+      fetch(`/api/mock/attempts/${attemptId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers: payload }),
+      })
+        .then(async (r) => {
+          if (!r.ok) {
+            const d = await r.json().catch(() => ({}));
+            throw new Error((d as { error?: string }).error ?? "Autosave failed");
+          }
+          setSaveError(null);
+        })
+        .catch((e) => {
+          setSaveError(e instanceof Error ? e.message : "Could not save answers");
         });
-      }
     }, 800);
     return () => clearTimeout(t);
-  }, [answers, current, secondsLeft, storageKey, attemptId, questions]);
+  }, [answers, current, secondsLeft, storageKey, attemptId, questions, examState]);
 
   useEffect(() => {
     const onVis = () => {
@@ -220,6 +279,7 @@ export function ExamRuntimeView() {
         if (ans.flagged) return "flagged" as const;
         if (
           (ans.text && ans.text.trim()) ||
+          ans.audioUrl ||
           (ans.images && ans.images.length > 0) ||
           (ans.voiceDur && ans.voiceDur > 0)
         )
@@ -347,6 +407,12 @@ export function ExamRuntimeView() {
           <AlertTriangle className="size-3.5" /> Tab-switch detected ({tabSwitches}) — strict mode logs these to your attempt.
         </div>
       )}
+      {saveError && (
+        <div className="bg-again/10 border-b border-again/30 px-4 py-2 text-xs flex items-center justify-between gap-2 text-again">
+          <span className="flex items-center gap-2"><AlertTriangle className="size-3.5" /> {saveError}</span>
+          <button type="button" onClick={() => setSaveError(null)} className="underline">Dismiss</button>
+        </div>
+      )}
 
       <div className="flex-1 grid lg:grid-cols-[260px_1fr_360px] gap-0 min-h-0">
         {/* Navigator */}
@@ -366,45 +432,47 @@ export function ExamRuntimeView() {
         {/* Question */}
         <section className="overflow-y-auto p-5 sm:p-8">
           <div className="max-w-2xl mx-auto">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-                <span>Q{current + 1} / {questions.length}</span>
-                <span>·</span>
+            <div className="rounded-2xl border border-border/40 bg-card/50 p-5 sm:p-7 shadow-sm">
+            <div className="flex items-center justify-between mb-5 gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+                <span className="px-2 py-0.5 rounded-md bg-primary/10 text-primary">Q{current + 1} / {questions.length}</span>
                 <span>{q.marks} marks</span>
                 <span>·</span>
-                <span>Bloom: {q.bloom}</span>
-                <span>·</span>
-                <span>Year {q.year}</span>
+                <span>{q.section}</span>
               </div>
               <button
                 onClick={() => setAnswer({ flagged: !a.flagged })}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border ${a.flagged ? "border-hard text-hard bg-hard/10" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border shrink-0 ${a.flagged ? "border-hard text-hard bg-hard/10" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
               >
                 <Flag className="size-3.5" /> {a.flagged ? "Flagged" : "Flag"}
               </button>
             </div>
 
-            <h2 className="text-lg sm:text-xl font-semibold leading-relaxed">{q.body}</h2>
+            <div className="rounded-xl bg-surface-raised/30 border border-border/30 p-4 sm:p-5 mb-5">
+              <QuestionBody text={q.body} className="font-medium text-foreground" />
+            </div>
 
             {q.choices && (
-              <div className="mt-5 space-y-2">
+              <div className="space-y-2.5">
+                <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-1">Select one answer</p>
                 {q.choices.map((c, i) => {
                   const selected = a.text === c;
                   return (
                     <button
                       key={i}
-                      onClick={() => setAnswer({ text: c })}
-                      className={`w-full text-left flex items-center gap-3 p-3.5 rounded-xl border transition-colors ${selected ? "border-primary bg-primary/10" : "border-border/40 bg-surface hover:border-primary/40"}`}
+                      onClick={() => setAnswer({ text: c, modality: "text" })}
+                      className={`w-full text-left flex items-start gap-3 p-4 rounded-xl border-2 transition-all ${selected ? "border-primary bg-primary/10 shadow-sm" : "border-border/40 bg-surface hover:border-primary/40 hover:bg-surface-raised/50"}`}
                     >
-                      <span className={`size-6 rounded-full flex items-center justify-center text-[11px] font-mono font-bold border ${selected ? "border-primary bg-primary text-primary-foreground" : "border-border/60 text-muted-foreground"}`}>
+                      <span className={`size-7 shrink-0 rounded-full flex items-center justify-center text-xs font-mono font-bold border mt-0.5 ${selected ? "border-primary bg-primary text-primary-foreground" : "border-border/60 text-muted-foreground bg-background"}`}>
                         {String.fromCharCode(65 + i)}
                       </span>
-                      <span className="text-sm">{c}</span>
+                      <QuestionBody text={c} className="text-sm flex-1" />
                     </button>
                   );
                 })}
               </div>
             )}
+            </div>
           </div>
         </section>
 
@@ -417,6 +485,8 @@ export function ExamRuntimeView() {
               answer={a}
               setAnswer={setAnswer}
               strict={examConfig?.rules.strict ?? false}
+              defaultModality={examConfig?.modality ?? "text"}
+              mixed={examConfig?.mixed ?? true}
             />
           </aside>
         )}
@@ -446,7 +516,9 @@ export function ExamRuntimeView() {
           <div className="w-full max-w-md rounded-2xl border border-border/50 bg-card p-6">
             <h3 className="text-lg font-bold">Submit final answers?</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              {status.filter((s) => s !== "answered").length} of {questions.length} questions are not fully answered. AI evaluation begins immediately.
+              {secondsLeft === 0
+                ? "Time is up — submit now to record your answers."
+                : `${status.filter((s) => s !== "answered").length} of ${questions.length} questions are not fully answered. AI evaluation begins immediately.`}
             </p>
             {submitError && (
               <div className="mt-4 rounded-lg border border-again/30 bg-again/10 px-3 py-2 text-sm text-again">
@@ -508,22 +580,35 @@ function AnswerPanel({
   answer,
   setAnswer,
   strict,
+  defaultModality,
+  mixed,
 }: {
   attemptId: string;
   questionId: string;
   answer: Answer;
   setAnswer: (p: Partial<Answer>) => void;
   strict: boolean;
+  defaultModality: Modality;
+  mixed: boolean;
 }) {
   const tabs: { id: Modality; icon: React.ComponentType<{ className?: string }>; label: string }[] = [
     { id: "text", icon: Type, label: "Text" },
     { id: "voice", icon: Mic, label: "Voice" },
     { id: "image", icon: ImageIcon, label: "Image" },
   ];
+  const visibleTabs = mixed ? tabs : tabs.filter((t) => t.id === defaultModality);
+
+  useEffect(() => {
+    if (!mixed && answer.modality !== defaultModality) {
+      setAnswer({ modality: defaultModality });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionId, mixed, defaultModality]);
+
   return (
     <div className="flex flex-col h-full min-h-[400px]">
       <div className="flex border-b border-border/40">
-        {tabs.map((t) => {
+        {visibleTabs.map((t) => {
           const active = answer.modality === t.id;
           return (
             <button key={t.id} onClick={() => setAnswer({ modality: t.id })} className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium border-b-2 transition-colors ${active ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
@@ -541,7 +626,9 @@ function AnswerPanel({
             attemptId={attemptId}
             questionId={questionId}
             dur={answer.voiceDur ?? 0}
+            audioUrl={answer.audioUrl}
             onRecorded={(d, url) => setAnswer({ voiceDur: d, audioUrl: url, modality: "voice" })}
+            onClear={() => setAnswer({ voiceDur: 0, audioUrl: undefined, modality: "voice" })}
             onChange={(d) => setAnswer({ voiceDur: d })}
           />
         )}
@@ -574,8 +661,8 @@ function TextAnswer({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onPaste={(e) => strict && e.preventDefault()}
-        placeholder="Type your answer…"
-        className="flex-1 min-h-[280px] resize-none p-3 rounded-lg bg-surface-raised/40 border border-border/40 text-sm leading-relaxed focus:outline-none focus:border-primary/40"
+        placeholder="Type your answer here. Use clear paragraphs for multi-part questions."
+        className="flex-1 min-h-[280px] resize-none p-4 rounded-xl bg-surface-raised/40 border border-border/40 text-[15px] leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
       />
       <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
         <span>{words} words · autosaved</span>
@@ -589,16 +676,22 @@ function VoiceAnswer({
   attemptId,
   questionId,
   dur,
+  audioUrl,
   onChange,
   onRecorded,
+  onClear,
 }: {
   attemptId: string;
   questionId: string;
   dur: number;
+  audioUrl?: string;
   onChange: (d: number) => void;
   onRecorded: (dur: number, url: string) => void;
+  onClear: () => void;
 }) {
   const [recording, setRecording] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const startedRef = useRef<number | null>(null);
   useEffect(() => {
     if (!recording) return;
@@ -621,6 +714,8 @@ function VoiceAnswer({
     recorder.stream.getTracks().forEach((t) => t.stop());
     const blob = new Blob(chunksRef.current, { type: "audio/webm" });
     if (blob.size > 0) {
+      setUploading(true);
+      setError(null);
       const form = new FormData();
       form.append("attemptId", attemptId);
       form.append("questionId", questionId);
@@ -628,16 +723,21 @@ function VoiceAnswer({
       const finalDur = startedRef.current
         ? Math.floor((Date.now() - startedRef.current) / 1000)
         : dur;
-      fetch("/api/mock/answers/audio", { method: "POST", body: form })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.url) onRecorded(finalDur, data.url);
-        })
-        .catch(() => {});
+      try {
+        const r = await fetch("/api/mock/answers/audio", { method: "POST", body: form });
+        const data = await r.json();
+        if (!r.ok || !data.url) throw new Error(data.error ?? "Upload failed");
+        onRecorded(finalDur, data.url);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not save recording");
+      } finally {
+        setUploading(false);
+      }
     }
   };
 
   const startRecording = async () => {
+    setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
@@ -647,7 +747,8 @@ function VoiceAnswer({
       recorder.start();
       setRecording(true);
     } catch {
-      setRecording(true);
+      setError("Microphone permission denied or unavailable.");
+      setRecording(false);
     }
   };
 
@@ -659,11 +760,16 @@ function VoiceAnswer({
         </button>
       </div>
       <div className="mt-4 font-mono tabular-nums text-2xl">{Math.floor(dur / 60).toString().padStart(2, "0")}:{(dur % 60).toString().padStart(2, "0")}</div>
-      <div className="text-xs text-muted-foreground mt-1">{recording ? "Recording…" : dur ? "Saved draft — re-record to replace" : "Tap to start recording"}</div>
-      {dur > 0 && !recording && (
+      <div className="text-xs text-muted-foreground mt-1">
+        {uploading ? "Uploading…" : recording ? "Recording…" : audioUrl || dur ? "Recording saved" : "Tap to start recording"}
+      </div>
+      {error && <p className="mt-2 text-xs text-again">{error}</p>}
+      {(dur > 0 || audioUrl) && !recording && !uploading && (
         <div className="mt-4 flex items-center gap-2">
-          <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-border/40 hover:bg-surface-raised"><Play className="size-3.5" /> Play</button>
-          <button onClick={() => onChange(0)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-border/40 text-destructive hover:bg-destructive/10"><Trash2 className="size-3.5" /> Discard</button>
+          {audioUrl && (
+            <audio controls src={audioUrl} className="max-w-full h-9" />
+          )}
+          <button onClick={() => onClear()} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-border/40 text-destructive hover:bg-destructive/10"><Trash2 className="size-3.5" /> Discard</button>
         </div>
       )}
       <div className="mt-5 w-full rounded-lg bg-surface-raised/40 p-3 text-left">
@@ -688,10 +794,19 @@ function ImageAnswer({
   onChange: (imgs: string[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const handleFiles = async (files: FileList | null) => {
     if (!files) return;
+    setUploading(true);
+    setError(null);
     const urls: string[] = [...images];
     for (const file of Array.from(files)) {
+      if (!file.type.startsWith("image/")) {
+        setError("Only image files (JPG, PNG) are supported.");
+        continue;
+      }
       const form = new FormData();
       form.append("attemptId", attemptId);
       form.append("questionId", questionId);
@@ -699,13 +814,14 @@ function ImageAnswer({
       try {
         const res = await fetch("/api/mock/answers/image", { method: "POST", body: form });
         const data = await res.json();
-        if (data.url) urls.push(data.url);
-        else urls.push(URL.createObjectURL(file));
-      } catch {
-        urls.push(URL.createObjectURL(file));
+        if (!res.ok || !data.url) throw new Error(data.error ?? "Upload failed");
+        urls.push(data.url);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Upload failed");
       }
     }
     onChange(urls);
+    setUploading(false);
   };
   return (
     <div className="flex flex-col gap-3">
@@ -715,9 +831,11 @@ function ImageAnswer({
       >
         <Upload className="size-6 text-muted-foreground" />
         <span className="font-medium">Capture or upload pages</span>
-        <span className="text-[11px] text-muted-foreground">JPG, PNG, PDF · multiple pages OK</span>
+        <span className="text-[11px] text-muted-foreground">JPG, PNG · multiple pages OK</span>
       </button>
-      <input ref={inputRef} type="file" accept="image/*,application/pdf" multiple capture="environment" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
+      {uploading && <p className="text-xs text-muted-foreground text-center">Uploading…</p>}
+      {error && <p className="text-xs text-again text-center">{error}</p>}
+      <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" multiple capture="environment" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
       {images.length > 0 && (
         <div className="grid grid-cols-2 gap-2">
           {images.map((src, i) => (

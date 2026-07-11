@@ -5,6 +5,7 @@ import { computeReviewStreak, reviewEventsToDateKeys } from "@/lib/review/streak
 import { aggregateTopicStats } from "@/lib/topics/aggregate-topic-stats";
 import { searchContent, formatRagContext } from "@/lib/vectors/search";
 import { DAY_LABELS, type ScheduleBlock } from "./types";
+import { getSrsForecast } from "@/lib/srs/forecast";
 import { minutesToHours } from "./preferences-schema";
 
 export type ScheduleAiMode = "narrative" | "profile";
@@ -23,7 +24,7 @@ export async function buildScheduleAiContext(
   userId: string,
   options: BuildScheduleAiContextOptions
 ): Promise<string> {
-  const [{ data: plan }, { data: profile }, topics, stats] = await Promise.all([
+  const [{ data: plan }, { data: profile }, topics, stats, srsForecast] = await Promise.all([
     supabase
       .from("study_plans")
       .select(
@@ -34,6 +35,7 @@ export async function buildScheduleAiContext(
     supabase.from("profiles").select("display_name, settings").eq("id", userId).single(),
     aggregateTopicStats(supabase, userId),
     getReviewStats(supabase, userId),
+    getSrsForecast(supabase, userId, 7),
   ]);
 
   const extended = pickExtendedSettings(
@@ -88,6 +90,15 @@ export async function buildScheduleAiContext(
     dueTopics.length
       ? dueTopics.map((t) => `- ${t.name}: ${t.due} due, ${t.mastery}% mastery`).join("\n")
       : "- No cards due today",
+    "",
+    "## SM-2 forecast (next 7 days — align review/learn blocks with this)",
+    srsForecast
+      .filter((d) => d.totalDue > 0)
+      .map(
+        (d) =>
+          `- ${d.date}: ${d.reviewDue} reviews, ${d.newDue} new (~${d.estimatedMinutes} min)`
+      )
+      .join("\n") || "- No scheduled load in the next week",
     "",
     "## Weakest topics (weight learn/recall blocks here)",
     weakTopics.length

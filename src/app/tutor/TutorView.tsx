@@ -143,19 +143,20 @@ export function TutorView() {
   const { initials } = useUser();
   const [messages, setMessages] = useState<Message[]>([welcomeMessage]);
   const [input, setInput] = useState("");
-  const [topics, setTopics] = useState<{ id: string; name: string }[]>([]);
-  const [topic, setTopic] = useState("");
+  const [topics, setTopics] = useState<{ id: string; name: string; slug: string }[]>([]);
+  const [topicSlug, setTopicSlug] = useState("");
 
   useEffect(() => {
     fetch("/api/me/topics")
       .then((r) => r.json())
       .then((d) => {
-        const list = (d.topics ?? []).map((t: { id: string; name: string }) => ({
+        const list = (d.topics ?? []).map((t: { id: string; name: string; slug: string }) => ({
           id: t.id,
           name: t.name,
+          slug: t.slug,
         }));
         setTopics(list);
-        if (list.length > 0) setTopic(list[0].name);
+        if (list.length > 0) setTopicSlug(list[0].slug);
       })
       .catch(() => setTopics([]));
   }, []);
@@ -166,21 +167,36 @@ export function TutorView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<{ title: string; snippet: string }[]>([]);
 
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
   const runSearch = async () => {
     if (!searchQuery.trim()) return;
-    const res = await fetch("/api/ai/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: searchQuery }),
-    });
-    const data = await res.json();
-    setSearchResults(
-      (data.results ?? []).map((r: { title?: string; content?: string }) => ({
-        title: r.title ?? "Result",
-        snippet: (r.content ?? "").slice(0, 120),
-      }))
-    );
+    setSearchLoading(true);
+    setSearchError(null);
+    setSearchResults([]);
+    try {
+      const res = await fetch("/api/ai/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: searchQuery }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Search failed");
+      setSearchResults(
+        (data.results ?? []).map((r: { title?: string; content?: string }) => ({
+          title: r.title ?? "Result",
+          snippet: (r.content ?? "").slice(0, 120),
+        }))
+      );
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : "Search failed");
+    } finally {
+      setSearchLoading(false);
+    }
   };
+
+  const selectedTopic = topics.find((t) => t.slug === topicSlug);
 
   const handleSend = async () => {
     if (!input.trim() || loading) return;
@@ -203,8 +219,8 @@ export function TutorView() {
         body: JSON.stringify({
           message: userMsg,
           threadId,
-          topicName: topic || null,
-          topicSlug: topic ? topic.toLowerCase().replace(/\s+/g, "-") : null,
+          topicName: selectedTopic?.name ?? null,
+          topicSlug: topicSlug || null,
         }),
       });
 
@@ -296,7 +312,7 @@ export function TutorView() {
       "Explain my last mistake": "What types of exam questions appear most often in my weak topics?",
       "Give me a practice problem": "Give me a practice problem with a step-by-step solution approach.",
       "What should I focus on?": "Based on my study data, what should I focus on today?",
-      "Teach me this topic": `Teach me ${topic} with a definition, example, common mistake, and a quick recap.`,
+      "Teach me this topic": `Teach me ${selectedTopic?.name ?? "this topic"} with a definition, example, common mistake, and a quick recap.`,
     };
     setInput(prompts[label] ?? label);
   };
@@ -319,8 +335,8 @@ export function TutorView() {
               </div>
             </div>
             <select
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
+              value={topicSlug}
+              onChange={(e) => setTopicSlug(e.target.value)}
               disabled={topics.length === 0}
               className="h-9 px-3 bg-surface rounded-lg border border-border/20 text-sm focus:outline-none focus:border-primary/40 disabled:opacity-50"
             >
@@ -328,7 +344,7 @@ export function TutorView() {
                 <option value="">No topics</option>
               ) : (
                 topics.map((t) => (
-                  <option key={t.id} value={t.name}>
+                  <option key={t.id} value={t.slug}>
                     {t.name}
                   </option>
                 ))
@@ -346,12 +362,16 @@ export function TutorView() {
             />
             <button
               type="button"
-              onClick={runSearch}
-              className="h-9 px-3 rounded-lg bg-surface-raised border border-border/20 text-xs font-medium hover:border-primary/40"
+              onClick={() => void runSearch()}
+              disabled={searchLoading}
+              className="h-9 px-3 rounded-lg bg-surface-raised border border-border/20 text-xs font-medium hover:border-primary/40 disabled:opacity-50"
             >
-              Search
+              {searchLoading ? "…" : "Search"}
             </button>
           </div>
+          {searchError && (
+            <p className="mb-3 text-xs text-again">{searchError}</p>
+          )}
           {searchResults.length > 0 && (
             <div className="mb-3 p-3 rounded-xl bg-surface border border-border/20 text-xs space-y-2 max-h-32 overflow-y-auto">
               {searchResults.map((r, i) => (

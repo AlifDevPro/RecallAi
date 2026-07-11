@@ -40,49 +40,42 @@ async function getTopicForUser(
 
 
 export async function GET(
-
   _request: Request,
-
   { params }: { params: Promise<{ slug: string }> }
-
 ) {
-
   const { slug } = await params;
-
   const auth = await requireUser();
-
   if (auth.response) return auth.response;
-
   const { supabase, user } = auth;
 
+  try {
+    return await getTopicDetailResponse(supabase, user.id, slug);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to load topic";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
 
+async function getTopicDetailResponse(
+  supabase: Awaited<ReturnType<typeof import("@/lib/supabase/server").createClient>>,
+  userId: string,
+  slug: string
+) {
 
-  const topic = await getTopicForUser(supabase, user.id, slug);
+  const topic = await getTopicForUser(supabase, userId, slug);
 
   if (!topic) {
-
     return NextResponse.json({ error: "Not found" }, { status: 404 });
-
   }
 
-
-
   const { data: cards, error: cardsError } = await supabase
-
     .from("cards")
-
     .select("id, front, back, topic_id")
-
     .eq("topic_id", topic.id)
-
-    .eq("user_id", user.id);
-
-
+    .eq("user_id", userId);
 
   if (cardsError) {
-
     return NextResponse.json({ error: cardsError.message }, { status: 500 });
-
   }
 
 
@@ -117,7 +110,7 @@ export async function GET(
 
       .select("card_id, due_at, mastery, mastery_7d_ago, last_reviewed_at")
 
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
 
       .in("card_id", cardIds);
 

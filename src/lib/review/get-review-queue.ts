@@ -13,6 +13,12 @@ export type ReviewQueueCard = {
   answer: string;
   mastery: number;
   dueAt: string;
+  srs: {
+    easiness: number;
+    interval_days: number;
+    repetitions: number;
+    lapse_count: number;
+  };
 };
 
 export type ReviewQueueMeta = {
@@ -186,7 +192,7 @@ export async function getReviewQueue(
 
   let schedQuery = supabase
     .from("card_scheduling")
-    .select("card_id, due_at, mastery")
+    .select("card_id, due_at, mastery, easiness, interval_days, repetitions, lapse_count")
     .eq("user_id", userId)
     .in("card_id", cardIds)
     .order("due_at", { ascending: true })
@@ -195,7 +201,31 @@ export async function getReviewQueue(
   schedQuery =
     mode === "due" ? schedQuery.lte("due_at", now) : schedQuery.gt("due_at", now);
 
-  const { data: schedRows, error: schedError } = await schedQuery;
+  let { data: schedRows, error: schedError } = await schedQuery;
+
+  if (schedError?.message?.includes("easiness") || schedError?.message?.includes("repetitions")) {
+    const fallback = await supabase
+      .from("card_scheduling")
+      .select("card_id, due_at, mastery")
+      .eq("user_id", userId)
+      .in("card_id", cardIds)
+      .order("due_at", { ascending: true })
+      .limit(limit);
+    schedRows = (fallback.data ?? []).map((r) => ({
+      ...r,
+      easiness: 2.5,
+      interval_days: 0,
+      repetitions: Number(r.mastery) > 0 ? 1 : 0,
+      lapse_count: 0,
+    }));
+    schedError = fallback.error;
+    if (mode === "due") {
+      schedRows = schedRows?.filter((r) => r.due_at <= now);
+    } else {
+      schedRows = schedRows?.filter((r) => r.due_at > now);
+    }
+  }
+
   if (schedError) throw new Error(schedError.message);
 
   const cardMap = new Map((cards ?? []).map((c) => [c.id, c]));
@@ -214,6 +244,12 @@ export async function getReviewQueue(
       answer: formatReviewAnswer(c.back, topicName),
       mastery: Number(row.mastery),
       dueAt: row.due_at,
+      srs: {
+        easiness: Number((row as { easiness?: number }).easiness) || 2.5,
+        interval_days: Number((row as { interval_days?: number }).interval_days) || 0,
+        repetitions: Number((row as { repetitions?: number }).repetitions) || 0,
+        lapse_count: Number((row as { lapse_count?: number }).lapse_count) || 0,
+      },
     });
   }
 

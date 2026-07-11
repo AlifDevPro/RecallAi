@@ -35,6 +35,9 @@ type SortKey = "name" | "mastery" | "due";
 async function fetchTopics(): Promise<TopicRow[]> {
   const r = await fetch("/api/me/topics");
   const d = (await r.json().catch(() => ({}))) as { topics?: TopicRow[]; error?: string };
+  if (r.status === 401) {
+    throw new Error(d.error ?? "Session expired — please sign in again");
+  }
   if (!r.ok) {
     throw new Error(d.error ?? "Failed to load topics");
   }
@@ -143,15 +146,23 @@ export function TopicsView() {
           </div>
 
           {topicsQuery.isError && (
-            <div className="mb-6 p-4 rounded-xl bg-again/10 border border-again/30 flex items-center justify-between gap-4">
+            <div className="mb-6 p-4 rounded-xl bg-again/10 border border-again/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <p className="text-sm text-again">{topicsQuery.error.message}</p>
-              <button
-                type="button"
-                onClick={() => void topicsQuery.refetch()}
-                className="text-sm font-medium text-primary hover:underline shrink-0"
-              >
-                Retry
-              </button>
+              <div className="flex items-center gap-3 shrink-0">
+                {topicsQuery.error.message.toLowerCase().includes("session") ||
+                topicsQuery.error.message.toLowerCase().includes("unauthorized") ? (
+                  <Link href="/login?next=/topics" className="text-sm font-medium text-primary hover:underline">
+                    Sign in
+                  </Link>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => void topicsQuery.refetch()}
+                  className="text-sm font-medium text-primary hover:underline"
+                >
+                  Retry
+                </button>
+              </div>
             </div>
           )}
 

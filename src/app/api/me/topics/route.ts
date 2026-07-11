@@ -4,6 +4,12 @@ import { requireUser } from "@/lib/supabase/route-auth";
 import { aggregateTopicStats } from "@/lib/topics/aggregate-topic-stats";
 import { ingestDocument } from "@/lib/vectors/ingest";
 import {
+  buildSchedulingInsert,
+  getNewCardsBudget,
+  insertCardScheduling,
+  staggerNewCardDueDates,
+} from "@/lib/srs/introduce-cards";
+import {
   resolveUniqueSlug,
   slugifyTopicName,
   validateCardFields,
@@ -64,7 +70,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: topicError?.message ?? "Failed to create topic" }, { status: 500 });
   }
 
-  for (const card of cards) {
+  const newPerDay = await getNewCardsBudget(supabase, user.id);
+  const dueDates = staggerNewCardDueDates(cards.length, { newPerDay });
+
+  for (let i = 0; i < cards.length; i++) {
+    const card = cards[i];
     const { data: c } = await supabase
       .from("cards")
       .insert({
@@ -77,12 +87,10 @@ export async function POST(request: Request) {
       .single();
 
     if (c) {
-      await supabase.from("card_scheduling").insert({
-        card_id: c.id,
-        user_id: user.id,
-        due_at: new Date().toISOString(),
-        mastery: 0,
-      });
+      await insertCardScheduling(
+        supabase,
+        buildSchedulingInsert(c.id, user.id, dueDates[i] ?? new Date().toISOString())
+      );
       await ingestDocument({
         sourceType: "card",
         sourceId: c.id,
