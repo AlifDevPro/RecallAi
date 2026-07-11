@@ -20,9 +20,15 @@ export type TutorSourceDisplay = {
 
 export const TutorResponseSchema = z.object({
   answer: z.string(),
+  key_points: z.array(z.string()).optional().nullable(),
   explanation: z.string().optional().nullable(),
+  step_by_step: z.array(z.string()).optional().nullable(),
   example: z.string().optional().nullable(),
+  worked_example: z.string().optional().nullable(),
   common_mistake: z.string().optional().nullable(),
+  your_mistake: z.string().optional().nullable(),
+  why_wrong: z.string().optional().nullable(),
+  why_correct: z.string().optional().nullable(),
   recap: z.string().optional().nullable(),
   quiz_question: z.string().optional().nullable(),
   follow_up: z.string().optional().nullable(),

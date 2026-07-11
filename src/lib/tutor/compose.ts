@@ -20,12 +20,26 @@ function cleanField(value: string | null | undefined): string | undefined {
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
+function cleanStringArray(values: string[] | null | undefined): string[] | undefined {
+  if (!values?.length) return undefined;
+  const cleaned = values
+    .map((v) => cleanField(v))
+    .filter((v): v is string => Boolean(v));
+  return cleaned.length ? cleaned : undefined;
+}
+
 function sanitizeResponse(raw: TutorResponse): TutorResponse {
   return {
     answer: cleanField(raw.answer) ?? FALLBACK_RESPONSE.answer,
+    key_points: cleanStringArray(raw.key_points),
     explanation: cleanField(raw.explanation),
+    step_by_step: cleanStringArray(raw.step_by_step),
     example: cleanField(raw.example),
+    worked_example: cleanField(raw.worked_example),
     common_mistake: cleanField(raw.common_mistake),
+    your_mistake: cleanField(raw.your_mistake),
+    why_wrong: cleanField(raw.why_wrong),
+    why_correct: cleanField(raw.why_correct),
     recap: cleanField(raw.recap),
     quiz_question: cleanField(raw.quiz_question),
     follow_up: cleanField(raw.follow_up),
@@ -56,24 +70,39 @@ export function parseTutorModelOutput(rawText: string): TutorResponse {
   return FALLBACK_RESPONSE;
 }
 
-const SECTION_LABELS: Record<keyof Omit<TutorResponse, "source_refs">, string> = {
-  answer: "",
+const SECTION_LABELS: Record<string, string> = {
   explanation: "Why it matters",
   example: "Example",
+  worked_example: "Worked solution",
   common_mistake: "Common mistake",
+  your_mistake: "Your mistake",
+  why_wrong: "Why your answer missed",
+  why_correct: "Why the correct approach works",
   recap: "Quick recap",
   quiz_question: "Try this",
-  follow_up: "",
   next_step: "Next step",
 };
+
+function appendList(parts: string[], label: string, items: string[]) {
+  if (!items.length) return;
+  parts.push(`**${label}:**\n${items.map((item, i) => `${i + 1}. ${item}`).join("\n")}`);
+}
 
 export function composeDisplayText(structured: TutorResponse): string {
   const parts: string[] = [structured.answer];
 
+  if (structured.key_points?.length) {
+    appendList(parts, "Key points", structured.key_points);
+  }
+
   for (const key of [
     "explanation",
     "example",
+    "worked_example",
     "common_mistake",
+    "your_mistake",
+    "why_wrong",
+    "why_correct",
     "recap",
     "quiz_question",
   ] as const) {
@@ -83,11 +112,15 @@ export function composeDisplayText(structured: TutorResponse): string {
     parts.push(label ? `**${label}:** ${value}` : value);
   }
 
+  if (structured.step_by_step?.length) {
+    appendList(parts, "Step by step", structured.step_by_step);
+  }
+
   if (structured.follow_up) {
     parts.push(structured.follow_up);
   }
   if (structured.next_step) {
-    parts.push(`**Next step:** ${structured.next_step}`);
+    parts.push(`**${SECTION_LABELS.next_step}:** ${structured.next_step}`);
   }
 
   return sanitizeTutorText(parts.join("\n\n"));

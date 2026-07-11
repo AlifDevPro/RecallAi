@@ -18,14 +18,21 @@ import {
 import { Sidebar } from "@/components/layout/Sidebar";
 import { MobileNav } from "@/components/layout/MobileNav";
 import { useUser } from "@/hooks/use-user";
+import { loadLastQuizSession } from "@/lib/tutor/quiz-storage";
 
 type TutorSource = { ref: string; label: string; sourceType: string; href?: string };
 
 type TutorStructured = {
   answer: string;
+  key_points?: string[] | null;
   explanation?: string | null;
+  step_by_step?: string[] | null;
   example?: string | null;
+  worked_example?: string | null;
   common_mistake?: string | null;
+  your_mistake?: string | null;
+  why_wrong?: string | null;
+  why_correct?: string | null;
   recap?: string | null;
   quiz_question?: string | null;
   follow_up?: string | null;
@@ -52,60 +59,141 @@ const welcomeMessage: Message = {
     "Hi! I'm your AI tutor. Ask me to explain concepts, walk through examples, quiz you, or help you plan what to study next.",
 };
 
+function SectionBlock({
+  title,
+  children,
+  tone = "default",
+}: {
+  title: string;
+  children: React.ReactNode;
+  tone?: "default" | "primary" | "mistake" | "correct";
+}) {
+  const tones = {
+    default: "bg-surface-raised/60",
+    primary: "border border-primary/15 bg-primary/5",
+    mistake: "border border-hard/20 bg-hard/5",
+    correct: "border border-good/20 bg-good/5",
+  };
+  const titleColors = {
+    default: "text-muted-foreground",
+    primary: "text-primary",
+    mistake: "text-hard",
+    correct: "text-good",
+  };
+  return (
+    <div className={`rounded-lg px-3 py-2.5 ${tones[tone]}`}>
+      <p className={`text-[10px] font-semibold uppercase tracking-wide mb-1.5 ${titleColors[tone]}`}>
+        {title}
+      </p>
+      {children}
+    </div>
+  );
+}
+
+function BulletList({ items }: { items: string[] }) {
+  return (
+    <ul className="space-y-1.5 text-sm leading-relaxed list-disc pl-4">
+      {items.map((item, i) => (
+        <li key={i}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function NumberedList({ items }: { items: string[] }) {
+  return (
+    <ol className="space-y-1.5 text-sm leading-relaxed list-decimal pl-4">
+      {items.map((item, i) => (
+        <li key={i}>{item}</li>
+      ))}
+    </ol>
+  );
+}
+
 function TutorStructuredMessage({ data }: { data: TutorStructured }) {
   return (
     <div className="space-y-3">
-      <p className="text-sm leading-relaxed">{data.answer}</p>
+      <p className="text-sm leading-relaxed font-medium">{data.answer}</p>
+
+      {data.key_points && data.key_points.length > 0 && (
+        <SectionBlock title="Key points">
+          <BulletList items={data.key_points} />
+        </SectionBlock>
+      )}
 
       {data.explanation && (
-        <div className="rounded-lg bg-surface-raised/60 px-3 py-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">
-            Why it matters
-          </p>
+        <SectionBlock title="Why it matters">
           <p className="text-sm leading-relaxed">{data.explanation}</p>
-        </div>
+        </SectionBlock>
+      )}
+
+      {data.step_by_step && data.step_by_step.length > 0 && (
+        <SectionBlock title="Step by step">
+          <NumberedList items={data.step_by_step} />
+        </SectionBlock>
       )}
 
       {data.example && (
-        <div className="rounded-lg border border-primary/15 bg-primary/5 px-3 py-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-primary mb-1 flex items-center gap-1">
-            <Lightbulb className="size-3" /> Example
+        <SectionBlock title="Example" tone="primary">
+          <p className="text-sm leading-relaxed flex items-start gap-1">
+            <Lightbulb className="size-3.5 text-primary shrink-0 mt-0.5" />
+            <span>{data.example}</span>
           </p>
-          <p className="text-sm leading-relaxed">{data.example}</p>
-        </div>
+        </SectionBlock>
+      )}
+
+      {data.worked_example && (
+        <SectionBlock title="Worked solution" tone="primary">
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">{data.worked_example}</p>
+        </SectionBlock>
+      )}
+
+      {data.your_mistake && (
+        <SectionBlock title="Your mistake" tone="mistake">
+          <p className="text-sm leading-relaxed">{data.your_mistake}</p>
+        </SectionBlock>
+      )}
+
+      {data.why_wrong && (
+        <SectionBlock title="Why your answer missed" tone="mistake">
+          <p className="text-sm leading-relaxed">{data.why_wrong}</p>
+        </SectionBlock>
+      )}
+
+      {data.why_correct && (
+        <SectionBlock title="Why the correct approach works" tone="correct">
+          <p className="text-sm leading-relaxed">{data.why_correct}</p>
+        </SectionBlock>
       )}
 
       {data.common_mistake && (
-        <div className="rounded-lg border border-hard/20 bg-hard/5 px-3 py-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-hard mb-1">
-            Common mistake
-          </p>
+        <SectionBlock title="Common mistake" tone="mistake">
           <p className="text-sm leading-relaxed">{data.common_mistake}</p>
-        </div>
+        </SectionBlock>
       )}
 
       {data.recap && (
-        <p className="text-sm text-muted-foreground italic border-l-2 border-primary/30 pl-3">
+        <p className="text-sm text-muted-foreground italic border-l-2 border-primary/30 pl-3 leading-relaxed">
           {data.recap}
         </p>
       )}
 
       {data.quiz_question && (
-        <div className="rounded-lg border border-border/30 bg-surface-raised px-3 py-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1">
-            <HelpCircle className="size-3" /> Try this
+        <SectionBlock title="Try this">
+          <p className="text-sm font-medium leading-relaxed flex items-start gap-1">
+            <HelpCircle className="size-3.5 shrink-0 mt-0.5" />
+            <span>{data.quiz_question}</span>
           </p>
-          <p className="text-sm font-medium leading-relaxed">{data.quiz_question}</p>
-        </div>
+        </SectionBlock>
       )}
 
       {data.follow_up && (
-        <p className="text-sm text-muted-foreground">{data.follow_up}</p>
+        <p className="text-sm text-muted-foreground leading-relaxed">{data.follow_up}</p>
       )}
 
       {data.next_step && (
-        <p className="text-xs text-primary flex items-center gap-1">
-          <ArrowRight className="size-3 shrink-0" />
+        <p className="text-xs text-primary flex items-start gap-1 leading-relaxed">
+          <ArrowRight className="size-3 shrink-0 mt-0.5" />
           {data.next_step}
         </p>
       )}
@@ -221,6 +309,7 @@ export function TutorView() {
           threadId,
           topicName: selectedTopic?.name ?? null,
           topicSlug: topicSlug || null,
+          recentQuiz: loadLastQuizSession(),
         }),
       });
 
@@ -308,11 +397,15 @@ export function TutorView() {
   };
 
   const handleQuickAction = (label: string) => {
+    const topic = selectedTopic?.name ?? "this topic";
     const prompts: Record<string, string> = {
-      "Explain my last mistake": "What types of exam questions appear most often in my weak topics?",
-      "Give me a practice problem": "Give me a practice problem with a step-by-step solution approach.",
-      "What should I focus on?": "Based on my study data, what should I focus on today?",
-      "Teach me this topic": `Teach me ${selectedTopic?.name ?? "this topic"} with a definition, example, common mistake, and a quick recap.`,
+      "Explain my last mistake":
+        "Explain my most recent quiz or practice mistake in detail. Walk through what I got wrong, why my answer was incorrect, and how to think about it correctly next time. Use my actual wrong answers if you have them.",
+      "Give me a practice problem":
+        "Give me a practice problem on my weak areas with a full worked solution, key steps, and one follow-up question.",
+      "What should I focus on?":
+        "Based on my weak topics, due cards, and recent mistakes, what should I focus on today? Give me a prioritized study plan with time estimates.",
+      "Teach me this topic": `Teach me ${topic} thoroughly: overview, key points, step-by-step explanation, a worked example, common mistakes, and a practice question.`,
     };
     setInput(prompts[label] ?? label);
   };
@@ -331,7 +424,7 @@ export function TutorView() {
               </div>
               <div>
                 <h1 className="text-lg font-semibold">AI Tutor</h1>
-                <p className="text-xs text-muted-foreground">Explains, examples, quizzes — grounded in your decks</p>
+                <p className="text-xs text-muted-foreground">Explains your mistakes, examples, quizzes — grounded in your decks</p>
               </div>
             </div>
             <select

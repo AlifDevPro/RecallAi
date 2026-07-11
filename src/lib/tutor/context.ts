@@ -28,6 +28,8 @@ export function buildTutorUserPrompt(input: {
   question: string;
   context: string;
   contextQuality: "rich" | "thin" | "empty";
+  learnerProfile?: string;
+  mistakeFocused?: boolean;
   topicName?: string | null;
   recentTurns?: { role: string; content: string }[];
 }): string {
@@ -42,17 +44,26 @@ export function buildTutorUserPrompt(input: {
 
   const qualityHint =
     input.contextQuality === "empty"
-      ? "Retrieval is EMPTY — answer from general knowledge only if safe, otherwise be honest that you lack their materials and suggest what to study."
+      ? "Retrieval is EMPTY — use the student profile and general knowledge; be honest about gaps."
       : input.contextQuality === "thin"
-        ? "Retrieval is THIN — use what's available cautiously, note gaps, and suggest a focused follow-up or subtopic."
-        : "Retrieval is RICH — ground your teaching in the provided excerpts but paraphrase naturally.";
+        ? "Retrieval is THIN — combine profile + excerpts cautiously."
+        : "Retrieval is RICH — ground teaching in excerpts and profile.";
+
+  const mistakeHint = input.mistakeFocused
+    ? "The student is asking about a MISTAKE — prioritize your_mistake, why_wrong, why_correct, worked_example using their actual wrong answers from the profile."
+    : "";
+
+  const profileBlock = input.learnerProfile?.trim()
+    ? `${input.learnerProfile}\n\n`
+    : "";
 
   return `${topicLine}${qualityHint}
+${mistakeHint}
 
-Study excerpts (internal refs only — never echo REF labels or IDs in your JSON):
+${profileBlock}Study excerpts (internal refs only — never echo REF labels or IDs in your JSON):
 ${input.context}
 
 ${history}Student question: ${input.question}
 
-Respond with JSON only matching the required schema.`;
+Respond with JSON only matching the required schema. Be thorough.`;
 }

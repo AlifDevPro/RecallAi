@@ -8,14 +8,22 @@ import {
 import { composeTutorReply } from "./compose";
 import { retrieveTutorContext } from "./retrieve";
 import { logTutorDebug, logTutorTurn } from "./logger";
+import {
+  fetchLearnerContext,
+  formatLearnerContext,
+  isMistakeFocusedQuestion,
+  type RecentQuizSession,
+} from "./learner-context";
 import type { TutorComposedReply, TutorDebugMeta } from "./types";
 
 export type TutorPipelineInput = {
   message: string;
   userId: string;
+  supabase: import("@supabase/supabase-js").SupabaseClient;
   topicName?: string | null;
   topicSlug?: string | null;
   recentTurns?: { role: string; content: string }[];
+  recentQuiz?: RecentQuizSession | null;
 };
 
 export type TutorPipelineResult = TutorComposedReply & {
@@ -25,18 +33,30 @@ export type TutorPipelineResult = TutorComposedReply & {
 export async function runTutorPipeline(
   input: TutorPipelineInput
 ): Promise<TutorPipelineResult> {
-  const chunks = await retrieveTutorContext(input.message, {
-    userId: input.userId,
-    topicName: input.topicName,
-    topicSlug: input.topicSlug,
-  });
+  const [chunks, learnerCtx] = await Promise.all([
+    retrieveTutorContext(input.message, {
+      userId: input.userId,
+      topicName: input.topicName,
+      topicSlug: input.topicSlug,
+      matchCount: 10,
+    }),
+    fetchLearnerContext(input.supabase, input.userId, {
+      topicSlug: input.topicSlug,
+      recentQuiz: input.recentQuiz,
+    }),
+  ]);
 
   const contextQuality = assessContextQuality(chunks);
   const context = formatTutorContext(chunks);
+  const learnerProfile = formatLearnerContext(learnerCtx, input.topicName);
+  const mistakeFocused = isMistakeFocusedQuestion(input.message);
+
   const prompt = buildTutorUserPrompt({
     question: input.message,
     context,
     contextQuality,
+    learnerProfile,
+    mistakeFocused,
     topicName: input.topicName,
     recentTurns: input.recentTurns,
   });
@@ -45,6 +65,9 @@ export async function runTutorPipeline(
     userId: input.userId,
     chunkCount: chunks.length,
     contextQuality,
+    mistakeFocused,
+    weakCards: learnerCtx.weakCards.length,
+    mockMistakes: learnerCtx.mockMistakes.length,
     refs: chunks.map((c) => c.ref),
   });
 
@@ -53,6 +76,7 @@ export async function runTutorPipeline(
     json: true,
     route: "tutor-chat",
     userId: input.userId,
+    maxTokens: 4096,
   });
 
   const composed = composeTutorReply(rawModelOutput, chunks);

@@ -7,6 +7,7 @@ export type GenerateOptions = {
   json?: boolean;
   route?: string;
   userId?: string | null;
+  maxTokens?: number;
 };
 
 export async function generateWithFailover(

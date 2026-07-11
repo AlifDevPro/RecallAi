@@ -11,6 +11,7 @@ export type GenerateOptions = {
   system?: string;
   json?: boolean;
   route?: string;
+  maxTokens?: number;
 };
 
 export type VisionInput = {
@@ -33,7 +34,7 @@ export async function groqGenerateText(
   const completion = await client.chat.completions.create({
     model: AI_CONFIG.groqModel,
     messages,
-    max_tokens: AI_CONFIG.maxOutputTokens,
+    max_tokens: options.maxTokens ?? AI_CONFIG.maxOutputTokens,
     response_format: options.json ? { type: "json_object" } : undefined,
   });
 

@@ -10,6 +10,7 @@ import {
   runTutorPipeline,
   streamDisplayChunks,
 } from "@/lib/tutor/pipeline";
+import type { RecentQuizSession } from "@/lib/tutor/learner-context";
 
 export async function POST(request: Request) {
   const auth = await requireUser();
@@ -29,6 +30,7 @@ export async function POST(request: Request) {
 
   const topicName = (body.topicName as string)?.trim() || null;
   const topicSlug = (body.topicSlug as string)?.trim() || null;
+  const recentQuiz = (body.recentQuiz as RecentQuizSession | null) ?? null;
 
   let threadId = body.threadId as string | undefined;
   if (!threadId) {
@@ -76,9 +78,11 @@ export async function POST(request: Request) {
         const result = await runTutorPipeline({
           message,
           userId: user.id,
+          supabase,
           topicName,
           topicSlug,
           recentTurns,
+          recentQuiz,
         });
 
         const metaPayload: Record<string, unknown> = {

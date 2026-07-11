@@ -21,6 +21,7 @@ import {
 import { Sidebar } from "@/components/layout/Sidebar";
 import { MobileNav } from "@/components/layout/MobileNav";
 import { MINUTES_PER_CARD } from "@/lib/review/constants";
+import { saveLastQuizSession } from "@/lib/tutor/quiz-storage";
 
 type QuizQuestion = {
   id: number;
@@ -185,6 +186,34 @@ function QuizViewInner() {
       setStep("done");
     }
   };
+
+  useEffect(() => {
+    if (step !== "done" || quizQuestions.length === 0) return;
+
+    const slug = topicSlug || selectedSlug;
+    const mistakes = quizQuestions
+      .map((q) => {
+        const result = results.find((r) => r.q === q.id);
+        if (result?.correct) return null;
+        return {
+          question: q.question,
+          options: q.options,
+          selectedIndex: result?.selected ?? null,
+          correctIndex: q.correct,
+          explanation: q.explanation,
+        };
+      })
+      .filter((m): m is NonNullable<typeof m> => m !== null);
+
+    saveLastQuizSession({
+      topicSlug: slug,
+      topicName: activeTopics.find((t) => (t.slug ?? t.id) === slug)?.name ?? slug,
+      score,
+      total: quizQuestions.length,
+      completedAt: new Date().toISOString(),
+      mistakes,
+    });
+  }, [step, quizQuestions, results, score, topicSlug, selectedSlug, activeTopics]);
 
   useEffect(() => {
     if (step !== "active") return;
